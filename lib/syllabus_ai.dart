@@ -50,7 +50,10 @@ List<ParsedTopic> parseClaudeSyllabus(String text) {
       'or copy the full reply.',
     );
   }
-  if (decoded is List) decoded = {'topics': decoded};
+  if (decoded is List) {
+    final Map<String, Object?> wrapped = <String, Object?>{'topics': decoded};
+    decoded = wrapped;
+  }
   return topicsFromToolInput(decoded);
 }
 
