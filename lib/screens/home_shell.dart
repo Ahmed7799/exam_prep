@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_state.dart';
 import 'placeholder_screen.dart';
+import 'plan_screen.dart';
 import 'syllabus_screen.dart';
 import 'today_screen.dart';
 
@@ -25,15 +26,7 @@ class _HomeShellState extends State<HomeShell> {
         index: _index,
         children: [
           TodayScreen(state: widget.state),
-          const PlaceholderScreen(
-            title: 'Plan',
-            icon: Icons.calendar_month,
-            phase: 'phase 2',
-            points: [
-              'Day-by-day plan built backwards from your exam date',
-              'Re-plans when you fall behind',
-            ],
-          ),
+          PlanScreen(state: widget.state),
           SyllabusScreen(state: widget.state),
           const PlaceholderScreen(
             title: 'Cards',

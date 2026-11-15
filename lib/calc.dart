@@ -35,3 +35,8 @@ String formatHours(double h) {
       ? '${rounded.toInt()}h'
       : '${rounded.toStringAsFixed(1)}h';
 }
+
+const _weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+/// Short form with the weekday, e.g. "Mon 16 Nov".
+String formatDay(DateTime d) => '${_weekdays[d.weekday - 1]} ${d.day} ${_months[d.month - 1]}';

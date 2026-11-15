@@ -17,7 +17,7 @@ class AppDb {
     final path = join(await getDatabasesPath(), 'exam_prep.db');
     return openDatabase(
       path,
-      version: 1,
+      version: 2,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -42,11 +42,17 @@ class AppDb {
             difficulty INTEGER NOT NULL DEFAULT 2,
             weightage INTEGER NOT NULL DEFAULT 0,
             stage INTEGER NOT NULL DEFAULT 0,
-            sort_order INTEGER NOT NULL DEFAULT 0
+            sort_order INTEGER NOT NULL DEFAULT 0,
+            due_date TEXT
           )
         ''');
         await db.execute('CREATE INDEX idx_topic_exam ON topic(exam_id)');
         await db.execute('CREATE INDEX idx_topic_parent ON topic(parent_id)');
+      },
+      onUpgrade: (db, oldVersion, newVersion) async {
+        if (oldVersion < 2) {
+          await db.execute('ALTER TABLE topic ADD COLUMN due_date TEXT');
+        }
       },
     );
   }
@@ -100,6 +106,26 @@ class AppDb {
   Future<void> setStage(int id, Stage stage) async {
     final db = await _database;
     await db.update('topic', {'stage': stage.index}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  /// Saves planned finish dates in one go (null clears a topic's date).
+  Future<void> setDueDates(Map<int, DateTime?> dates) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      for (final entry in dates.entries) {
+        final d = entry.value;
+        await txn.update(
+          'topic',
+          {
+            'due_date': d == null
+                ? null
+                : '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}',
+          },
+          where: 'id = ?',
+          whereArgs: [entry.key],
+        );
+      }
+    });
   }
 
   /// Deletes the topic and, through the foreign key, all its subtopics.

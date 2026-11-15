@@ -87,6 +87,7 @@ class Topic {
     this.importance = 0,
     this.stage = Stage.notStarted,
     this.sortOrder = 0,
+    this.dueDate,
   });
 
   final int? id;
@@ -105,6 +106,9 @@ class Topic {
   final Stage stage;
   final int sortOrder;
 
+  /// The day the plan says this topic should be finished by (null = not planned).
+  final DateTime? dueDate;
+
   Topic copyWith({
     String? name,
     double? sizeHours,
@@ -122,6 +126,7 @@ class Topic {
         importance: importance ?? this.importance,
         stage: stage ?? this.stage,
         sortOrder: sortOrder,
+        dueDate: dueDate,
       );
 
   Map<String, Object?> toMap() => {
@@ -134,6 +139,7 @@ class Topic {
         'weightage': importance,
         'stage': stage.index,
         'sort_order': sortOrder,
+        'due_date': dueDate == null ? null : _isoDate(dueDate!),
       };
 
   factory Topic.fromMap(Map<String, Object?> m) => Topic(
@@ -146,6 +152,7 @@ class Topic {
         importance: m['weightage'] as int,
         stage: _stageFromIndex(m['stage'] as int),
         sortOrder: m['sort_order'] as int,
+        dueDate: m['due_date'] == null ? null : DateTime.parse(m['due_date'] as String),
       );
 }
 

@@ -4,12 +4,16 @@ import 'calc.dart';
 import 'db.dart';
 import 'models.dart';
 import 'parser.dart';
+import 'planner.dart';
 
 /// Holds the exam and its topic tree, and tells the screens when they change.
 class AppState extends ChangeNotifier {
   Exam? exam;
   List<Topic> topics = [];
   Map<int?, List<Topic>> _children = {};
+
+  Plan? _plan;
+  DateTime _planDay = DateTime(2000);
 
   Future<void> load() => _reload();
 
@@ -18,6 +22,7 @@ class AppState extends ChangeNotifier {
     exam = e;
     topics = e == null ? [] : await AppDb.instance.getTopics(e.id!);
     _children = {};
+    _plan = null;
     for (final t in topics) {
       (_children[t.parentId] ??= []).add(t);
     }
@@ -153,4 +158,86 @@ class AppState extends ChangeNotifier {
   double get remainingHours => leaves
       .where((t) => !isComplete(t.stage))
       .fold(0.0, (sum, t) => sum + t.sizeHours);
+
+  // ---- Planner ----
+
+  /// Topics you still have to study, in syllabus order.
+  List<Topic> get remainingLeaves {
+    final out = <Topic>[];
+    void walk(int? parent) {
+      for (final t in childrenOf(parent)) {
+        if (hasChildren(t)) {
+          walk(t.id);
+        } else if (!isComplete(t.stage)) {
+          out.add(t);
+        }
+      }
+    }
+
+    walk(null);
+    return out;
+  }
+
+  /// The schedule projected from today with what is left. It is rebuilt
+  /// whenever topics change, so it always matches reality.
+  Plan get plan {
+    final e = exam;
+    final today = dayOnly(DateTime.now());
+    if (_plan == null || _planDay != today) {
+      _planDay = today;
+      _plan = e == null
+          ? Plan([], {}, [], false)
+          : buildPlan(exam: e, today: today, remaining: remainingLeaves);
+    }
+    return _plan!;
+  }
+
+  /// Saves the current projection as the plan you are held to.
+  Future<void> replan() async {
+    final e = exam;
+    if (e == null) return;
+    final p = buildPlan(exam: e, today: DateTime.now(), remaining: remainingLeaves);
+    final dates = <int, DateTime?>{
+      for (final t in topics)
+        if (t.id != null) t.id!: p.finishDates[t.id!],
+    };
+    await AppDb.instance.setDueDates(dates);
+    await _reload();
+  }
+
+  bool get hasPlan => leaves.any((t) => t.dueDate != null);
+
+  /// Unfinished topics whose planned finish day has passed.
+  List<Topic> get overdue {
+    final today = dayOnly(DateTime.now());
+    return remainingLeaves
+        .where((t) => t.dueDate != null && t.dueDate!.isBefore(today))
+        .toList();
+  }
+
+  double get overdueHours => overdue.fold(0.0, (sum, t) => sum + t.sizeHours);
+
+  /// Topics added or left out since the plan was saved.
+  bool get needsReplan => hasPlan && remainingLeaves.any((t) => t.dueDate == null);
+
+  double get typicalDayHours {
+    final e = exam;
+    if (e == null) return 0;
+    return (e.weekdayHours * 5 + e.weekendHours * 2) / 7;
+  }
+
+  Alert get alert => alertFor(
+        overdueHours: hasPlan ? overdueHours : 0,
+        dailyHours: typicalDayHours,
+        fits: plan.fits,
+      );
+
+  /// Today's slice of the projected plan (empty on a rest day).
+  PlanDay? get todayPlan {
+    final today = dayOnly(DateTime.now());
+    for (final d in plan.days) {
+      if (d.date == today) return d;
+    }
+    return null;
+  }
 }

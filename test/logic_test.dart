@@ -1,6 +1,7 @@
 import 'package:exam_prep/calc.dart';
 import 'package:exam_prep/models.dart';
 import 'package:exam_prep/parser.dart';
+import 'package:exam_prep/planner.dart';
 import 'package:exam_prep/syllabus_ai.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -124,5 +125,78 @@ Let me know if you want the next part.
     expect(isComplete(Stage.done), isTrue);
     expect(isComplete(Stage.revision), isTrue);
     expect(isComplete(Stage.reviewing), isFalse);
+  });
+
+  group('buildPlan', () {
+    Exam exam(DateTime date, {Set<int> off = const {}}) => Exam(
+          name: 'Test',
+          date: date,
+          weekdayHours: 2,
+          weekendHours: 2,
+          daysOff: off,
+        );
+
+    Topic topic(int id, double hours) =>
+        Topic(id: id, examId: 1, name: 'T$id', sizeHours: hours);
+
+    test('fills days in order and splits a long topic', () {
+      // 5 study days (Mon 16 to Fri 20 Nov), 2h each, exam on Sat 21.
+      final plan = buildPlan(
+        exam: exam(DateTime(2026, 11, 21)),
+        today: DateTime(2026, 11, 16),
+        remaining: [topic(1, 3), topic(2, 1), topic(3, 2)],
+      );
+      expect(plan.fits, isTrue);
+      expect(plan.days.length, 5);
+      // T1 takes all of day 1 and 1h of day 2, then T2 finishes day 2.
+      expect(plan.days[0].items.single.hours, 2);
+      expect(plan.days[0].items.single.finishes, isFalse);
+      expect(plan.days[1].items.map((i) => i.topic.id).toList(), [1, 2]);
+      expect(plan.finishDates[1], DateTime(2026, 11, 17));
+      expect(plan.finishDates[2], DateTime(2026, 11, 17));
+      expect(plan.finishDates[3], DateTime(2026, 11, 18));
+    });
+
+    test('skips rest days', () {
+      final plan = buildPlan(
+        exam: exam(DateTime(2026, 11, 21), off: {2}), // Tuesday off
+        today: DateTime(2026, 11, 16),
+        remaining: [topic(1, 4)],
+      );
+      expect(plan.days.length, 4);
+      expect(plan.finishDates[1], DateTime(2026, 11, 18)); // Mon + Wed
+    });
+
+    test('reports what does not fit', () {
+      final plan = buildPlan(
+        exam: exam(DateTime(2026, 11, 18)), // two study days = 4h
+        today: DateTime(2026, 11, 16),
+        remaining: [topic(1, 3), topic(2, 3)],
+      );
+      expect(plan.fits, isFalse);
+      expect(plan.overflow.map((t) => t.id).toList(), [2]);
+      expect(plan.overflowHours, 3);
+    });
+
+    test('holds back revision days but uses them if needed', () {
+      final date = DateTime(2026, 12, 1);
+      final today = DateTime(2026, 11, 16); // 15 study days = 30h
+      final easy = buildPlan(exam: exam(date), today: today, remaining: [topic(1, 20)]);
+      expect(easy.revisionDaysUsed, isFalse);
+      expect(easy.days.where((d) => d.isRevision).length, 2);
+      final tight = buildPlan(exam: exam(date), today: today, remaining: [topic(1, 29)]);
+      expect(tight.fits, isTrue);
+      expect(tight.revisionDaysUsed, isTrue);
+    });
+  });
+
+  group('alertFor', () {
+    test('escalates with days behind', () {
+      expect(alertFor(overdueHours: 0, dailyHours: 3, fits: true), Alert.onTrack);
+      expect(alertFor(overdueHours: 2, dailyHours: 3, fits: true), Alert.nudge);
+      expect(alertFor(overdueHours: 5, dailyHours: 3, fits: true), Alert.warning);
+      expect(alertFor(overdueHours: 12, dailyHours: 3, fits: true), Alert.alarm);
+      expect(alertFor(overdueHours: 0, dailyHours: 3, fits: false), Alert.warning);
+    });
   });
 }
