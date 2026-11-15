@@ -1,0 +1,4 @@
+# Default analyzer options. Add lint rules here later if wanted.
+analyzer:
+  language:
+    strict-casts: false
