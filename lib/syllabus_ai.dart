@@ -59,7 +59,13 @@ List<ParsedTopic> parseClaudeSyllabus(String text) {
 
 String? _extractJson(String text) {
   final trimmed = text.trim();
-  for (final pair in const [('{', '}'), ('[', ']')]) {
+  final braceAt = trimmed.indexOf('{');
+  final bracketAt = trimmed.indexOf('[');
+  final bracketFirst = bracketAt != -1 && (braceAt == -1 || bracketAt < braceAt);
+  final pairs = bracketFirst
+      ? const [('[', ']'), ('{', '}')]
+      : const [('{', '}'), ('[', ']')];
+  for (final pair in pairs) {
     final start = trimmed.indexOf(pair.$1);
     final end = trimmed.lastIndexOf(pair.$2);
     if (start != -1 && end > start) {
