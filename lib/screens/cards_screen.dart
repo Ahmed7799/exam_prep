@@ -8,6 +8,7 @@ import 'package:share_plus/share_plus.dart';
 import '../app_state.dart';
 import '../export.dart';
 import '../models.dart';
+import 'backup_screen.dart';
 import 'card_editor_screen.dart';
 import 'card_list_screen.dart';
 import 'cards_import_screen.dart';
@@ -72,11 +73,13 @@ class CardsScreen extends StatelessWidget {
                   if (v == 'all') _open(context, CardListScreen(state: state));
                   if (v == 'anki') _export(context, anki: true);
                   if (v == 'csv') _export(context, anki: false);
+                  if (v == 'import') _open(context, BackupScreen(state: state));
                 },
                 itemBuilder: (_) => const [
                   PopupMenuItem(value: 'all', child: Text('Browse all cards')),
                   PopupMenuItem(value: 'anki', child: Text('Export for Anki')),
                   PopupMenuItem(value: 'csv', child: Text('Export with progress (CSV)')),
+                  PopupMenuItem(value: 'import', child: Text('Import from Anki')),
                 ],
               ),
             ],

@@ -16,6 +16,14 @@ class AppState extends ChangeNotifier {
   List<StudyLog> logs = [];
   List<Flashcard> cards = [];
   int reviewsToday = 0;
+
+  /// Reviews per day over the last 12 weeks.
+  Map<DateTime, int> reviewHistory = {};
+
+  /// Study timer, kept in the database so it survives closing the app.
+  int? timerTopicId;
+  DateTime? timerStartedAt;
+  int timerSavedSeconds = 0;
   Map<int, Flashcard> _cardById = {};
   Map<int, Topic> _byId = {};
   Map<int, double> _loggedByTopic = {};
@@ -30,6 +38,15 @@ class AppState extends ChangeNotifier {
     logs = e == null ? [] : await AppDb.instance.getLogs(e.id!);
     cards = e == null ? [] : await AppDb.instance.getCards(e.id!);
     reviewsToday = e == null ? 0 : await AppDb.instance.countReviewsOn(e.id!, DateTime.now());
+    final now = DateTime.now();
+    reviewHistory = e == null
+        ? {}
+        : await AppDb.instance.reviewsByDay(e.id!, DateTime(now.year, now.month, now.day - 84));
+    final db = AppDb.instance;
+    timerTopicId = int.tryParse(await db.getSetting('timer_topic') ?? '');
+    final started = await db.getSetting('timer_start');
+    timerStartedAt = started == null ? null : DateTime.tryParse(started);
+    timerSavedSeconds = int.tryParse(await db.getSetting('timer_saved') ?? '') ?? 0;
     _cardById = {for (final c in cards) c.id!: c};
     _children = {};
     _byId = {for (final t in topics) t.id!: t};
@@ -518,6 +535,271 @@ class AppState extends ChangeNotifier {
     final up = pathOf(t);
     return up.isEmpty ? t.name : '$up > ${t.name}';
   }
+
+  // ---- Study timer ----
+
+  bool get timerActive => timerTopicId != null;
+
+  bool get timerRunning => timerStartedAt != null;
+
+  Duration get timerElapsed {
+    var secs = timerSavedSeconds;
+    final start = timerStartedAt;
+    if (start != null) secs += DateTime.now().difference(start).inSeconds;
+    return Duration(seconds: secs < 0 ? 0 : secs);
+  }
+
+  Future<void> _saveTimer() async {
+    final db = AppDb.instance;
+    await db.setSetting('timer_topic', timerTopicId?.toString());
+    await db.setSetting('timer_start', timerStartedAt?.toIso8601String());
+    await db.setSetting('timer_saved', timerTopicId == null ? null : '$timerSavedSeconds');
+    notifyListeners();
+  }
+
+  Future<void> startTimer(Topic t) async {
+    timerTopicId = t.id;
+    timerStartedAt = DateTime.now();
+    timerSavedSeconds = 0;
+    await _saveTimer();
+  }
+
+  Future<void> pauseTimer() async {
+    final start = timerStartedAt;
+    if (start == null) return;
+    timerSavedSeconds += DateTime.now().difference(start).inSeconds;
+    timerStartedAt = null;
+    await _saveTimer();
+  }
+
+  Future<void> resumeTimer() async {
+    if (timerTopicId == null || timerStartedAt != null) return;
+    timerStartedAt = DateTime.now();
+    await _saveTimer();
+  }
+
+  /// Stops the timer. With [log], adds the time (to the nearest minute) to the
+  /// topic for today. Returns the hours logged.
+  Future<double> stopTimer({required bool log}) async {
+    final topic = timerTopicId == null ? null : topicById(timerTopicId!);
+    final minutes = (timerElapsed.inSeconds / 60).round();
+    timerTopicId = null;
+    timerStartedAt = null;
+    timerSavedSeconds = 0;
+    await _saveTimer();
+    if (!log || topic == null || minutes < 1) return 0;
+    final hours = minutes / 60;
+    await logStudy(topic, hours);
+    return hours;
+  }
+
+  // ---- Dashboard ----
+
+  /// Share of the syllabus done, by study hours (0 to 1).
+  double get coverage {
+    var total = 0.0;
+    var left = 0.0;
+    for (final t in orderedLeaves) {
+      total += t.sizeHours;
+      left += remainingOf(t);
+    }
+    if (total <= 0) return 0;
+    final f = 1 - left / total;
+    return f < 0 ? 0 : (f > 1 ? 1 : f);
+  }
+
+  /// Chance of recalling a reviewed card right now.
+  double recallOf(Flashcard c) {
+    final s = c.stability;
+    final last = c.lastReview;
+    if (s == null || last == null) return 0;
+    final days = DateTime.now().difference(last).inMinutes / 1440;
+    return fsrs.retrievability(days < 0 ? 0 : days, s);
+  }
+
+  /// Average recall over cards you have reviewed (null if none yet).
+  double? get memory {
+    final reviewed = cards.where((c) => !c.isNew).toList();
+    if (reviewed.isEmpty) return null;
+    return reviewed.fold(0.0, (sum, c) => sum + recallOf(c)) / reviewed.length;
+  }
+
+  /// Share of cards you have reviewed at least once.
+  double get cardsStarted {
+    if (cards.isEmpty) return 0;
+    return cards.where((c) => !c.isNew).length / cards.length;
+  }
+
+  /// One number for how ready you are: syllabus covered, and how much of what
+  /// you made cards for you still remember.
+  int get readiness {
+    final m = memory;
+    final score = m == null ? coverage : coverage * 0.6 + m * cardsStarted * 0.4;
+    return (score * 100).round();
+  }
+
+  /// Topics whose reviewed cards you remember worst.
+  List<TopicMemory> get weakTopics {
+    final byTopic = <int, List<Flashcard>>{};
+    for (final c in cards) {
+      if (!c.isNew) (byTopic[c.topicId] ??= []).add(c);
+    }
+    final out = <TopicMemory>[];
+    byTopic.forEach((id, list) {
+      final t = _byId[id];
+      if (t == null || list.length < 3) return;
+      final recall = list.fold(0.0, (sum, c) => sum + recallOf(c)) / list.length;
+      final lapses = list.fold(0, (sum, c) => sum + c.lapses);
+      out.add(TopicMemory(t, recall, lapses, list.length));
+    });
+    out.sort((a, b) => a.recall.compareTo(b.recall));
+    return out;
+  }
+
+  /// Hours logged on each day, from the study log.
+  double loggedOn(DateTime day) => _loggedByDay[dayOnly(day)] ?? 0;
+
+  int reviewsOn(DateTime day) => reviewHistory[dayOnly(day)] ?? 0;
+
+  bool _activeOn(DateTime day) => loggedOn(day) > 0 || reviewsOn(day) > 0;
+
+  /// Days in a row with study or reviews. Rest days do not break it, and
+  /// today only counts once you have done something.
+  int get streak {
+    final e = exam;
+    if (e == null) return 0;
+    final today = dayOnly(DateTime.now());
+    var day = _activeOn(today) ? today : DateTime(today.year, today.month, today.day - 1);
+    var n = 0;
+    for (var i = 0; i < 400; i++) {
+      if (_activeOn(day)) {
+        n++;
+      } else if (capacityOn(e, day) > 0) {
+        break;
+      }
+      day = DateTime(day.year, day.month, day.day - 1);
+      if (e.startDate != null && day.isBefore(dayOnly(e.startDate!))) break;
+    }
+    return n;
+  }
+
+  /// Study days in the last week (before today) with nothing logged or reviewed.
+  int get missedDays {
+    final e = exam;
+    if (e == null) return 0;
+    final today = dayOnly(DateTime.now());
+    final start = e.startDate == null ? today : dayOnly(e.startDate!);
+    var n = 0;
+    for (var i = 1; i <= 7; i++) {
+      final day = DateTime(today.year, today.month, today.day - i);
+      if (day.isBefore(start)) break;
+      if (capacityOn(e, day) > 0 && !_activeOn(day)) n++;
+    }
+    return n;
+  }
+
+  /// Hours and reviews for the 7 days ending [weeksAgo] weeks before today.
+  (double, int) weekTotals(int weeksAgo) {
+    final today = dayOnly(DateTime.now());
+    var hours = 0.0;
+    var reviews = 0;
+    for (var i = 0; i < 7; i++) {
+      final day = DateTime(today.year, today.month, today.day - weeksAgo * 7 - i);
+      hours += loggedOn(day);
+      reviews += reviewsOn(day);
+    }
+    return (hours, reviews);
+  }
+
+  /// A status report to paste into the Claude app for advice.
+  String coachPrompt() {
+    final e = exam;
+    if (e == null) return '';
+    final b = StringBuffer()
+      ..writeln('I am preparing for ${e.name} on ${formatDate(e.date)} ($daysLeft days left). '
+          'I study ${formatHours(e.weekdayHours)} on weekdays and ${formatHours(e.weekendHours)} '
+          'on weekends. Both papers carry equal marks.')
+      ..writeln()
+      ..writeln('Where I stand today:');
+    for (final p in papers) {
+      final s = statsFor(p);
+      b.writeln('- ${paperName(p)}: ${(s.doneFraction * 100).round()}% done, '
+          '${s.topicsDone} of ${s.topicsTotal} chapters complete, '
+          '${formatHours(s.remainingHours)} left, ${formatHours(s.loggedWeek)} studied in the last 7 days.');
+    }
+    final f = forecast;
+    final pace = weekPace;
+    b
+      ..writeln('- Overall: ${formatHours(f.remaining)} of study left; I need '
+          '${formatHours(f.needPerDay)} per study day.')
+      ..writeln('- Last 7 days: logged ${formatHours(pace.logged)} of ${formatHours(pace.planned)} planned; '
+          '$missedDays study days with nothing done; current streak $streak days.')
+      ..writeln('- Flashcards: ${cards.length} cards, ${dueCards.length} due now, '
+          '${memory == null ? 'none reviewed yet' : 'average recall ${(memory! * 100).round()}%'}.');
+    final weak = weakTopics.take(5).toList();
+    if (weak.isNotEmpty) {
+      b.writeln('- Weakest topics by recall: '
+          '${weak.map((w) => '${w.topic.name} (${(w.recall * 100).round()}%)').join('; ')}.');
+    }
+    final started = inProgress.take(5).toList();
+    if (started.isNotEmpty) {
+      b.writeln('- Chapters in progress: ${started.map((t) => t.name).join('; ')}.');
+    }
+    final left = <String>[];
+    for (final t in orderedLeaves) {
+      if (!isComplete(t.stage) && loggedHoursOf(t) == 0) left.add(t.name);
+    }
+    if (left.isNotEmpty) {
+      b.writeln('- Not started (${left.length}): ${left.take(25).join('; ')}'
+          '${left.length > 25 ? '; and more' : ''}.');
+    }
+    b
+      ..writeln()
+      ..writeln('Be direct with me. Am I on track? What should I study this week, in what order, '
+          'and how should I split time between the two papers? Point out anything I am neglecting.');
+    return b.toString();
+  }
+
+  // ---- Daily reality check ----
+
+  String _todayKey() {
+    final d = DateTime.now();
+    return '${d.year}-${d.month}-${d.day}';
+  }
+
+  Future<bool> checkShownToday() async =>
+      (await AppDb.instance.getSetting('reality_check')) == _todayKey();
+
+  Future<void> markCheckShown() => AppDb.instance.setSetting('reality_check', _todayKey());
+
+  /// The paper furthest behind the other, if the gap is wide (15 points or more).
+  PaperStats? get laggingPaper {
+    final a = statsFor(1);
+    final b = statsFor(2);
+    if (a.topicsTotal == 0 || b.topicsTotal == 0) return null;
+    final gap = a.doneFraction - b.doneFraction;
+    if (gap.abs() < 0.15) return null;
+    return gap > 0 ? b : a;
+  }
+
+  // ---- Backup ----
+
+  Future<void> backupTo(String target) => AppDb.instance.backupTo(target);
+
+  Future<void> restoreFrom(String source) async {
+    await AppDb.instance.restoreFrom(source);
+    await _reload();
+  }
+}
+
+/// How well you remember one topic's cards.
+class TopicMemory {
+  TopicMemory(this.topic, this.recall, this.lapses, this.cards);
+
+  final Topic topic;
+  final double recall;
+  final int lapses;
+  final int cards;
 }
 
 /// Totals for one paper.

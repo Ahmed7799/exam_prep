@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../calc.dart';
 import '../models.dart';
+import 'timer_screen.dart';
 
 /// Bottom sheet for one chapter: log time studied today and set its stage.
 Future<void> showStudySheet(BuildContext context, AppState state, Topic topic) {
@@ -75,8 +76,51 @@ class _StudySheet extends StatelessWidget {
                   '${paperShort(state.paperOf(t))} · ${formatHours(logged)} logged of '
                   '${formatHours(t.sizeHours)} · ${formatHours(state.remainingOf(t))} left',
                 ),
+                const SizedBox(height: 12),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () async {
+                      final nav = Navigator.of(context);
+                      if (state.timerActive && state.timerTopicId != t.id) {
+                        final other = state.topicById(state.timerTopicId!);
+                        final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('A timer is already running'),
+                            content: Text(
+                              'It is running for ${other?.name ?? 'another chapter'}. '
+                              'Stop it and log that time first?',
+                            ),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, false),
+                                child: const Text('Cancel'),
+                              ),
+                              TextButton(
+                                onPressed: () => Navigator.pop(ctx, true),
+                                child: const Text('Log it and switch'),
+                              ),
+                            ],
+                          ),
+                        );
+                        if (ok != true) return;
+                        await state.stopTimer(log: true);
+                      }
+                      if (!state.timerActive) await state.startTimer(t);
+                      nav.pop();
+                      nav.push(
+                        MaterialPageRoute<void>(builder: (_) => TimerScreen(state: state)),
+                      );
+                    },
+                    icon: const Icon(Icons.timer_outlined),
+                    label: Text(
+                      state.timerTopicId == t.id ? 'Open the running timer' : 'Start study timer',
+                    ),
+                  ),
+                ),
                 const SizedBox(height: 16),
-                Text('Log time studied today', style: theme.textTheme.titleSmall),
+                Text('Or log time by hand', style: theme.textTheme.titleSmall),
                 const SizedBox(height: 8),
                 Wrap(
                   spacing: 8,

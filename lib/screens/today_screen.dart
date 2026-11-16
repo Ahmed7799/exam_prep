@@ -7,6 +7,7 @@ import '../planner.dart';
 import 'review_screen.dart';
 import 'study_picker_screen.dart';
 import 'study_sheet.dart';
+import 'timer_screen.dart';
 
 /// Home tab: countdown, today's study hours, and the chapter picker.
 class TodayScreen extends StatelessWidget {
@@ -34,6 +35,7 @@ class TodayScreen extends StatelessWidget {
           body: ListView(
             padding: const EdgeInsets.all(16),
             children: [
+              TimerStrip(state: state),
               if (hasTopics && days > 0) _AlertBanner(state: state),
               Card(
                 child: Padding(

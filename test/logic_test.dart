@@ -1,3 +1,4 @@
+import 'package:exam_prep/anki_import.dart';
 import 'package:exam_prep/calc.dart';
 import 'package:exam_prep/cards_ai.dart';
 import 'package:exam_prep/export.dart';
@@ -388,4 +389,41 @@ Here you go:
       expect(() => parseClaudeCards('nothing'), throwsA(isA<SyllabusAiException>()));
     });
   });
+
+  group('Anki import', () {
+    test('reads plain-text notes with HTML, tags and page numbers', () {
+      const file = '#separator:tab\n'
+          '#html:true\n'
+          '#tags column:3\n'
+          'Art. 17?\t<b>Untouchability</b> is abolished<br><br><small>Page 42</small>\tpolity\n'
+          'Capital &amp; labour\t<span style="background-color: yellow">Key</span> idea\n'
+          'only one field\n';
+      final cards = parseAnkiText(file);
+      expect(cards.length, 2);
+      expect(cards[0].front, 'Art. 17?');
+      expect(cards[0].back, '**Untouchability** is abolished');
+      expect(cards[0].page, 42);
+      expect(cards[1].front, 'Capital & labour');
+      expect(cards[1].back, '==Key== idea');
+      expect(cards[1].page, isNull);
+    });
+
+    test('round-trips the app\'s own Anki export', () {
+      final exported = ankiText(
+        [Flashcard(topicId: 1, front: 'Q', back: 'A **b**\nnext', page: 7)],
+        topicPath: (_) => 'X',
+      );
+      final back = parseAnkiText(exported).single;
+      expect(back.front, 'Q');
+      expect(back.back, 'A **b**\nnext');
+      expect(back.page, 7);
+    });
+
+    test('handles quoted fields', () {
+      final cards = parseAnkiText('"a ""quoted"" front"\t"multi\tpart"\n');
+      expect(cards.single.front, 'a "quoted" front');
+      expect(cards.single.back, 'multi\tpart');
+    });
+  });
 }
+

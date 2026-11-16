@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:path/path.dart';
 import 'package:sqflite/sqflite.dart';
 
@@ -13,11 +15,12 @@ class AppDb {
 
   Future<Database> get _database async => _db ??= await _open();
 
+  static Future<String> get path async => join(await getDatabasesPath(), 'exam_prep.db');
+
   Future<Database> _open() async {
-    final path = join(await getDatabasesPath(), 'exam_prep.db');
     return openDatabase(
-      path,
-      version: 5,
+      await path,
+      version: 6,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -54,6 +57,7 @@ class AppDb {
         await _createLogTable(db);
         await _createCardTables(db);
         await _createSourceTable(db);
+        await _createSettingsTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -72,6 +76,9 @@ class AppDb {
           await db.execute('ALTER TABLE topic ADD COLUMN source_id INTEGER');
           await db.execute('ALTER TABLE topic ADD COLUMN source_page INTEGER');
           await _createSourceTable(db);
+        }
+        if (oldVersion < 6) {
+          await _createSettingsTable(db);
         }
       },
     );
@@ -135,6 +142,10 @@ class AppDb {
         last_topic_id INTEGER
       )
     ''');
+  }
+
+  static Future<void> _createSettingsTable(Database db) async {
+    await db.execute('CREATE TABLE settings(key TEXT PRIMARY KEY, value TEXT)');
   }
 
   static String _iso(DateTime d) =>
@@ -248,6 +259,71 @@ class AppDb {
     );
     final n = rows.isEmpty ? null : rows.first['n'];
     return n is int ? n : 0;
+  }
+
+  /// Reviews per day since [from], keyed by day.
+  Future<Map<DateTime, int>> reviewsByDay(int examId, DateTime from) async {
+    final db = await _database;
+    final rows = await db.rawQuery(
+      'SELECT r.day AS day, COUNT(*) AS n FROM review_log r JOIN card c ON c.id = r.card_id '
+      'JOIN topic t ON t.id = c.topic_id WHERE t.exam_id = ? AND r.day >= ? GROUP BY r.day',
+      [examId, _iso(from)],
+    );
+    return {
+      for (final r in rows) DateTime.parse(r['day'] as String): (r['n'] as int?) ?? 0,
+    };
+  }
+
+  // ---- Settings ----
+
+  Future<String?> getSetting(String key) async {
+    final db = await _database;
+    final rows = await db.query('settings', where: 'key = ?', whereArgs: [key]);
+    return rows.isEmpty ? null : rows.first['value'] as String?;
+  }
+
+  Future<void> setSetting(String key, String? value) async {
+    final db = await _database;
+    if (value == null) {
+      await db.delete('settings', where: 'key = ?', whereArgs: [key]);
+    } else {
+      await db.insert('settings', {'key': key, 'value': value},
+          conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  // ---- Backup ----
+
+  /// Copies the whole database to [target] as one file. The database is
+  /// closed first so the copy is complete; it reopens on the next query.
+  Future<void> backupTo(String target) async {
+    await _db?.close();
+    _db = null;
+    await File(await path).copy(target);
+  }
+
+  /// Replaces the database with a backup file after checking that it is one.
+  /// Throws a [FormatException] if the file is not an Exam Prep backup.
+  Future<void> restoreFrom(String source) async {
+    final check = await openDatabase(source, readOnly: true, singleInstance: false);
+    try {
+      final tables = await check.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('exam', 'topic')",
+      );
+      if (tables.length < 2) {
+        throw const FormatException('This file is not an Exam Prep backup.');
+      }
+    } finally {
+      await check.close();
+    }
+    await _db?.close();
+    _db = null;
+    final dest = await path;
+    for (final suffix in const ['-wal', '-shm', '-journal']) {
+      final f = File('$dest$suffix');
+      if (await f.exists()) await f.delete();
+    }
+    await File(source).copy(dest);
   }
 
   // ---- PDFs ----

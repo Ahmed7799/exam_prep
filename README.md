@@ -1,14 +1,19 @@
-# Exam Prep (phase 1)
+# Exam Prep
 
-Personal Android app for exam preparation. Phase 1 contains:
+Personal Android app for exam preparation. Data is stored on the phone in SQLite.
 
-- Exam setup: name, date, weekday and weekend study hours, rest days
-- Syllabus tree: add, edit, delete topics and subtopics; paste a syllabus using indentation, or import Claude's breakdown of your PDF
-- Topic stages: Not started, Reading, Cards made, Reviewing, Done, Revision
-- Today screen: days left, % complete, hours you have vs hours left in the syllabus
-- Placeholder tabs for Plan, Cards and Progress (later phases)
-
-Data is stored locally on the phone in SQLite.
+- **Today:** countdown, hours studied against today's target, warning banner, study timer,
+  "What are you studying?" chapter picker, cards due.
+- **Plan:** finish-date forecast, hours needed per day, progress per paper (Paper 1 General
+  Studies, Paper 2 Core subject), last 7 days.
+- **Syllabus:** topic tree with stages; import Claude's breakdown of your syllabus PDF.
+- **Cards:** FSRS spaced repetition (intervals stop before the exam), Hard / Medium /
+  To review lists, editor with bold and highlight, page numbers, cards from Claude,
+  Anki export (text) and CSV with progress, Anki import.
+- **Progress:** readiness score, streak and missed days, 12-week calendar, syllabus map,
+  weakest topics, and a report to paste into Claude for advice.
+- **Warnings:** a daily reality check pops up when you are behind.
+- **Backup:** Progress > backup icon. Save everything to one file and restore it later.
 
 ## Import your syllabus (Claude app does the reading)
 
