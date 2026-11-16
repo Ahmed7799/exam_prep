@@ -202,3 +202,132 @@ class StudyLog {
         hours: (m['hours'] as num).toDouble(),
       );
 }
+
+/// Revision-list tags you put on cards during review.
+const cardFlags = [1, 2, 3];
+
+String flagLabel(int flag) => switch (flag) {
+      1 => 'Hard',
+      2 => 'Medium',
+      3 => 'To review',
+      _ => 'None',
+    };
+
+Color flagColor(int flag) => switch (flag) {
+      1 => Colors.red,
+      2 => Colors.orange,
+      3 => Colors.blue,
+      _ => Colors.grey,
+    };
+
+/// A card before it is saved, for example from a Claude reply.
+class CardDraft {
+  const CardDraft(this.front, this.back, {this.page});
+
+  final String front;
+  final String back;
+
+  /// Page number printed on the source PDF.
+  final int? page;
+}
+
+class Flashcard {
+  Flashcard({
+    this.id,
+    required this.topicId,
+    required this.front,
+    required this.back,
+    this.page,
+    this.flag = 0,
+    DateTime? created,
+    DateTime? due,
+    this.stability,
+    this.difficulty,
+    this.reps = 0,
+    this.lapses = 0,
+    this.lastReview,
+  })  : created = created ?? DateTime.now(),
+        due = due ?? DateTime.now();
+
+  final int? id;
+  final int topicId;
+  final String front;
+  final String back;
+
+  /// Page number printed on the source PDF, so you can check the original.
+  final int? page;
+
+  /// 0 none, 1 Hard, 2 Medium, 3 To review.
+  final int flag;
+  final DateTime created;
+  final DateTime due;
+  final double? stability;
+  final double? difficulty;
+  final int reps;
+  final int lapses;
+  final DateTime? lastReview;
+
+  bool get isNew => reps == 0;
+
+  Flashcard copyWith({
+    int? topicId,
+    String? front,
+    String? back,
+    int? page,
+    bool clearPage = false,
+    int? flag,
+    DateTime? due,
+    double? stability,
+    double? difficulty,
+    int? reps,
+    int? lapses,
+    DateTime? lastReview,
+  }) =>
+      Flashcard(
+        id: id,
+        topicId: topicId ?? this.topicId,
+        front: front ?? this.front,
+        back: back ?? this.back,
+        page: clearPage ? null : (page ?? this.page),
+        flag: flag ?? this.flag,
+        created: created,
+        due: due ?? this.due,
+        stability: stability ?? this.stability,
+        difficulty: difficulty ?? this.difficulty,
+        reps: reps ?? this.reps,
+        lapses: lapses ?? this.lapses,
+        lastReview: lastReview ?? this.lastReview,
+      );
+
+  Map<String, Object?> toMap() => {
+        if (id != null) 'id': id,
+        'topic_id': topicId,
+        'front': front,
+        'back': back,
+        'page': page,
+        'flag': flag,
+        'created': created.toIso8601String(),
+        'due': due.toIso8601String(),
+        'stability': stability,
+        'difficulty': difficulty,
+        'reps': reps,
+        'lapses': lapses,
+        'last_review': lastReview?.toIso8601String(),
+      };
+
+  factory Flashcard.fromMap(Map<String, Object?> m) => Flashcard(
+        id: m['id'] as int?,
+        topicId: m['topic_id'] as int,
+        front: m['front'] as String,
+        back: m['back'] as String,
+        page: m['page'] as int?,
+        flag: (m['flag'] as int?) ?? 0,
+        created: DateTime.parse(m['created'] as String),
+        due: DateTime.parse(m['due'] as String),
+        stability: (m['stability'] as num?)?.toDouble(),
+        difficulty: (m['difficulty'] as num?)?.toDouble(),
+        reps: (m['reps'] as int?) ?? 0,
+        lapses: (m['lapses'] as int?) ?? 0,
+        lastReview: m['last_review'] == null ? null : DateTime.parse(m['last_review'] as String),
+      );
+}

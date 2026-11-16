@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../app_state.dart';
+import 'cards_screen.dart';
 import 'placeholder_screen.dart';
 import 'plan_screen.dart';
 import 'syllabus_screen.dart';
@@ -28,15 +29,7 @@ class _HomeShellState extends State<HomeShell> {
           TodayScreen(state: widget.state),
           PlanScreen(state: widget.state),
           SyllabusScreen(state: widget.state),
-          const PlaceholderScreen(
-            title: 'Cards',
-            icon: Icons.style,
-            phase: 'phase 3',
-            points: [
-              'Spaced-repetition review with FSRS',
-              'Card editor, revision lists and Anki export',
-            ],
-          ),
+          CardsScreen(state: widget.state),
           const PlaceholderScreen(
             title: 'Progress',
             icon: Icons.insights,

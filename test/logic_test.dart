@@ -1,4 +1,8 @@
 import 'package:exam_prep/calc.dart';
+import 'package:exam_prep/cards_ai.dart';
+import 'package:exam_prep/export.dart';
+import 'package:exam_prep/fsrs.dart';
+import 'package:exam_prep/markup.dart';
 import 'package:exam_prep/models.dart';
 import 'package:exam_prep/parser.dart';
 import 'package:exam_prep/planner.dart';
@@ -263,6 +267,125 @@ Let me know if you want the next part.
         ],
       });
       expect(items.map((e) => e.paper).toList(), [1, 0, 2, 0, 0]);
+    });
+  });
+
+  group('FSRS', () {
+    const fsrs = Fsrs();
+    final start = DateTime(2026, 11, 13, 9);
+
+    FsrsOutcome first(int rating) => fsrs.review(
+          stability: null,
+          difficulty: null,
+          lastReview: null,
+          now: start,
+          rating: rating,
+        );
+
+    test('new cards: Again in 10 minutes, then 1, 3 and 16 days', () {
+      expect(first(1).due, start.add(const Duration(minutes: 10)));
+      expect(first(2).due, DateTime(2026, 11, 14));
+      expect(first(3).due, DateTime(2026, 11, 16));
+      expect(first(4).due, DateTime(2026, 11, 29));
+      expect(first(4).difficulty < first(1).difficulty, isTrue);
+    });
+
+    test('a card recalled on time gets a longer gap; a lapse a shorter memory', () {
+      final f = first(3);
+      final now = DateTime(2026, 11, 16, 9);
+      FsrsOutcome again(int rating) => fsrs.review(
+            stability: f.stability,
+            difficulty: f.difficulty,
+            lastReview: start,
+            now: now,
+            rating: rating,
+          );
+      expect(again(2).due, DateTime(2026, 11, 21));
+      expect(again(3).due, DateTime(2026, 11, 27));
+      expect(again(4).due, DateTime(2026, 12, 12));
+      expect(again(1).stability < f.stability, isTrue);
+      expect(again(1).due, now.add(const Duration(minutes: 10)));
+    });
+
+    test('never schedules past the cap', () {
+      const capped = Fsrs(maxIntervalDays: 5);
+      final out = capped.review(
+        stability: null,
+        difficulty: null,
+        lastReview: null,
+        now: start,
+        rating: 4,
+      );
+      expect(out.due, DateTime(2026, 11, 18));
+    });
+
+    test('interval labels', () {
+      final now = DateTime(2026, 11, 16, 9);
+      expect(intervalLabel(now.add(const Duration(minutes: 10)), now), '10m');
+      expect(intervalLabel(DateTime(2026, 11, 19), now), '3d');
+      expect(intervalLabel(DateTime(2027, 1, 15), now), '2.0mo');
+    });
+  });
+
+  group('markup', () {
+    test('splits bold and highlight', () {
+      final parts = parseMarkup('The **Preamble** is ==not== enforceable');
+      expect(parts.map((p) => p.text).toList(), ['The ', 'Preamble', ' is ', 'not', ' enforceable']);
+      expect(parts[1].bold, isTrue);
+      expect(parts[3].highlight, isTrue);
+      expect(plainText('a **b** c'), 'a b c');
+    });
+
+    test('turns into safe HTML for Anki', () {
+      expect(markupToHtml('**A** < B\nnext'), '<b>A</b> &lt; B<br>next');
+    });
+  });
+
+  group('exports', () {
+    final cards = [
+      Flashcard(id: 1, topicId: 7, front: 'Art. 17?', back: '**Untouchability**', page: 42, flag: 1),
+      Flashcard(id: 2, topicId: 7, front: 'Say "hi", ok', back: 'b'),
+    ];
+    String path(int id) => 'Indian Polity > Fundamental Rights';
+
+    test('Anki text has headers, HTML, page and tags', () {
+      final lines = ankiText(cards, topicPath: path).trim().split('\n');
+      expect(lines[0], '#separator:tab');
+      expect(
+        lines[3],
+        'Art. 17?\t<b>Untouchability</b><br><br><small>Page 42</small>\t'
+        'Indian_Polity::Fundamental_Rights hard',
+      );
+    });
+
+    test('CSV quotes fields with commas and quotes', () {
+      final lines = progressCsv(cards, topicPath: path).trim().split('\n');
+      expect(lines.length, 3);
+      expect(lines[2].startsWith('"Say ""hi"", ok",b,,'), isTrue);
+      expect(lines[1].contains(',Hard,new,'), isTrue);
+    });
+  });
+
+  group('parseClaudeCards', () {
+    test('reads cards with pages in a fenced reply', () {
+      final cards = parseClaudeCards('''
+Here you go:
+```json
+{"cards": [
+  {"front": "Q1", "back": "**A1**", "page": 12},
+  {"front": "Q2", "back": "A2", "page": "p. 13"},
+  {"front": "", "back": "skipped"},
+  {"front": "Q3", "back": "A3"}
+]}
+```
+''');
+      expect(cards.map((c) => c.front).toList(), ['Q1', 'Q2', 'Q3']);
+      expect(cards.map((c) => c.page).toList(), [12, 13, null]);
+    });
+
+    test('rejects replies without cards', () {
+      expect(() => parseClaudeCards('{"cards": []}'), throwsA(isA<SyllabusAiException>()));
+      expect(() => parseClaudeCards('nothing'), throwsA(isA<SyllabusAiException>()));
     });
   });
 }

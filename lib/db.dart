@@ -17,7 +17,7 @@ class AppDb {
     final path = join(await getDatabasesPath(), 'exam_prep.db');
     return openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -50,6 +50,7 @@ class AppDb {
         await db.execute('CREATE INDEX idx_topic_exam ON topic(exam_id)');
         await db.execute('CREATE INDEX idx_topic_parent ON topic(parent_id)');
         await _createLogTable(db);
+        await _createCardTables(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -57,6 +58,9 @@ class AppDb {
           await db.execute('ALTER TABLE exam ADD COLUMN start_date TEXT');
           await db.update('exam', {'start_date': _iso(DateTime.now())});
           await _createLogTable(db);
+        }
+        if (oldVersion < 4) {
+          await _createCardTables(db);
         }
       },
     );
@@ -73,6 +77,38 @@ class AppDb {
     ''');
     await db.execute('CREATE INDEX idx_log_topic ON study_log(topic_id)');
     await db.execute('CREATE INDEX idx_log_day ON study_log(day)');
+  }
+
+  static Future<void> _createCardTables(Database db) async {
+    await db.execute('''
+      CREATE TABLE card(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        topic_id INTEGER NOT NULL REFERENCES topic(id) ON DELETE CASCADE,
+        front TEXT NOT NULL,
+        back TEXT NOT NULL,
+        page INTEGER,
+        flag INTEGER NOT NULL DEFAULT 0,
+        created TEXT NOT NULL,
+        due TEXT NOT NULL,
+        stability REAL,
+        difficulty REAL,
+        reps INTEGER NOT NULL DEFAULT 0,
+        lapses INTEGER NOT NULL DEFAULT 0,
+        last_review TEXT
+      )
+    ''');
+    await db.execute('CREATE INDEX idx_card_topic ON card(topic_id)');
+    await db.execute('''
+      CREATE TABLE review_log(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        card_id INTEGER NOT NULL REFERENCES card(id) ON DELETE CASCADE,
+        ts TEXT NOT NULL,
+        day TEXT NOT NULL,
+        rating INTEGER NOT NULL
+      )
+    ''');
+    await db.execute('CREATE INDEX idx_review_card ON review_log(card_id)');
+    await db.execute('CREATE INDEX idx_review_day ON review_log(day)');
   }
 
   static String _iso(DateTime d) =>
@@ -129,6 +165,63 @@ class AppDb {
   Future<void> setStage(int id, Stage stage) async {
     final db = await _database;
     await db.update('topic', {'stage': stage.index}, where: 'id = ?', whereArgs: [id]);
+  }
+
+  // ---- Cards ----
+
+  Future<List<Flashcard>> getCards(int examId) async {
+    final db = await _database;
+    final rows = await db.rawQuery(
+      'SELECT c.* FROM card c JOIN topic t ON t.id = c.topic_id '
+      'WHERE t.exam_id = ? ORDER BY c.id',
+      [examId],
+    );
+    return rows.map(Flashcard.fromMap).toList();
+  }
+
+  Future<int> insertCard(Flashcard c) async {
+    final db = await _database;
+    return db.insert('card', c.toMap());
+  }
+
+  Future<void> insertCards(List<Flashcard> cards) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      for (final c in cards) {
+        await txn.insert('card', c.toMap());
+      }
+    });
+  }
+
+  Future<void> updateCard(Flashcard c) async {
+    final db = await _database;
+    await db.update('card', c.toMap(), where: 'id = ?', whereArgs: [c.id]);
+  }
+
+  Future<void> deleteCard(int id) async {
+    final db = await _database;
+    await db.delete('card', where: 'id = ?', whereArgs: [id]);
+  }
+
+  Future<void> addReview(int cardId, DateTime ts, int rating) async {
+    final db = await _database;
+    await db.insert('review_log', {
+      'card_id': cardId,
+      'ts': ts.toIso8601String(),
+      'day': _iso(ts),
+      'rating': rating,
+    });
+  }
+
+  Future<int> countReviewsOn(int examId, DateTime day) async {
+    final db = await _database;
+    final rows = await db.rawQuery(
+      'SELECT COUNT(*) AS n FROM review_log r JOIN card c ON c.id = r.card_id '
+      'JOIN topic t ON t.id = c.topic_id WHERE t.exam_id = ? AND r.day = ?',
+      [examId, _iso(day)],
+    );
+    final n = rows.isEmpty ? null : rows.first['n'];
+    return n is int ? n : 0;
   }
 
   // ---- Study log ----

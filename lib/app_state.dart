@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import 'calc.dart';
 import 'db.dart';
+import 'fsrs.dart';
 import 'models.dart';
 import 'parser.dart';
 import 'planner.dart';
@@ -13,6 +14,9 @@ class AppState extends ChangeNotifier {
   Map<int?, List<Topic>> _children = {};
 
   List<StudyLog> logs = [];
+  List<Flashcard> cards = [];
+  int reviewsToday = 0;
+  Map<int, Flashcard> _cardById = {};
   Map<int, Topic> _byId = {};
   Map<int, double> _loggedByTopic = {};
   Map<DateTime, double> _loggedByDay = {};
@@ -24,6 +28,9 @@ class AppState extends ChangeNotifier {
     exam = e;
     topics = e == null ? [] : await AppDb.instance.getTopics(e.id!);
     logs = e == null ? [] : await AppDb.instance.getLogs(e.id!);
+    cards = e == null ? [] : await AppDb.instance.getCards(e.id!);
+    reviewsToday = e == null ? 0 : await AppDb.instance.countReviewsOn(e.id!, DateTime.now());
+    _cardById = {for (final c in cards) c.id!: c};
     _children = {};
     _byId = {for (final t in topics) t.id!: t};
     _loggedByTopic = {};
@@ -364,6 +371,152 @@ class AppState extends ChangeNotifier {
     });
     if ((left[1].loggedWeek - left[0].loggedWeek).abs() < 0.5) return null;
     return left.first.paper;
+  }
+
+  // ---- Flashcards ----
+
+  /// New cards brought into one review session.
+  static const newPerSession = 20;
+
+  Flashcard? cardById(int id) => _cardById[id];
+
+  List<Flashcard> cardsOf(int topicId) => cards.where((c) => c.topicId == topicId).toList();
+
+  List<Flashcard> cardsWithFlag(int flag) => cards.where((c) => c.flag == flag).toList();
+
+  /// Reviewed cards whose time has come, oldest first.
+  List<Flashcard> get dueCards {
+    final now = DateTime.now();
+    final list = cards.where((c) => !c.isNew && !c.due.isAfter(now)).toList();
+    list.sort((a, b) => a.due.compareTo(b.due));
+    return list;
+  }
+
+  List<Flashcard> get newCards => cards.where((c) => c.isNew).toList();
+
+  /// What a review session works through: due cards, then some new ones.
+  List<Flashcard> get reviewQueue => [...dueCards, ...newCards.take(newPerSession)];
+
+  /// Cards never come back after the exam: intervals stop at the day before it.
+  Fsrs get fsrs {
+    final d = daysLeft;
+    if (exam == null || d < 0) return const Fsrs();
+    return Fsrs(maxIntervalDays: d - 1 < 1 ? 1 : d - 1);
+  }
+
+  /// When each rating would bring the card back, as short labels.
+  Map<int, String> previewLabels(Flashcard c) {
+    final now = DateTime.now();
+    return {
+      for (final r in const [1, 2, 3, 4])
+        r: intervalLabel(
+          fsrs
+              .review(
+                stability: c.stability,
+                difficulty: c.difficulty,
+                lastReview: c.lastReview,
+                now: now,
+                rating: r,
+              )
+              .due,
+          now,
+        ),
+    };
+  }
+
+  /// Records a review. A topic whose cards you start reviewing moves to Reviewing.
+  Future<void> reviewCard(Flashcard c, int rating) async {
+    final now = DateTime.now();
+    final out = fsrs.review(
+      stability: c.stability,
+      difficulty: c.difficulty,
+      lastReview: c.lastReview,
+      now: now,
+      rating: rating,
+    );
+    final updated = c.copyWith(
+      due: out.due,
+      stability: out.stability,
+      difficulty: out.difficulty,
+      reps: c.reps + 1,
+      lapses: rating == 1 && !c.isNew ? c.lapses + 1 : c.lapses,
+      lastReview: now,
+    );
+    await AppDb.instance.updateCard(updated);
+    await AppDb.instance.addReview(c.id!, now, rating);
+    final topic = _byId[c.topicId];
+    if (topic != null && topic.stage == Stage.cardsMade) {
+      await AppDb.instance.setStage(topic.id!, Stage.reviewing);
+      await _reload();
+      return;
+    }
+    _putCard(updated);
+    reviewsToday++;
+    notifyListeners();
+  }
+
+  void _putCard(Flashcard c) {
+    final i = cards.indexWhere((x) => x.id == c.id);
+    if (i >= 0) cards[i] = c;
+    _cardById[c.id!] = c;
+  }
+
+  Future<void> setCardFlag(Flashcard c, int flag) async {
+    final updated = c.copyWith(flag: flag);
+    await AppDb.instance.updateCard(updated);
+    _putCard(updated);
+    notifyListeners();
+  }
+
+  Future<void> _markCardsMade(int topicId) async {
+    final t = _byId[topicId];
+    if (t != null && (t.stage == Stage.notStarted || t.stage == Stage.reading)) {
+      await AppDb.instance.setStage(topicId, Stage.cardsMade);
+    }
+  }
+
+  Future<void> addCard(Flashcard c) async {
+    await AppDb.instance.insertCard(c);
+    await _markCardsMade(c.topicId);
+    await _reload();
+  }
+
+  /// Adds cards (for example from a Claude reply) to a topic. Returns the count.
+  Future<int> addCards(int topicId, List<CardDraft> drafts) async {
+    if (drafts.isEmpty) return 0;
+    final now = DateTime.now();
+    await AppDb.instance.insertCards([
+      for (final d in drafts)
+        Flashcard(
+          topicId: topicId,
+          front: d.front,
+          back: d.back,
+          page: d.page,
+          created: now,
+          due: now,
+        ),
+    ]);
+    await _markCardsMade(topicId);
+    await _reload();
+    return drafts.length;
+  }
+
+  Future<void> updateCard(Flashcard c) async {
+    await AppDb.instance.updateCard(c);
+    await _reload();
+  }
+
+  Future<void> deleteCard(Flashcard c) async {
+    await AppDb.instance.deleteCard(c.id!);
+    await _reload();
+  }
+
+  /// Path for tags and exports, like "Polity > Fundamental Rights".
+  String topicPathFor(int topicId) {
+    final t = _byId[topicId];
+    if (t == null) return '';
+    final up = pathOf(t);
+    return up.isEmpty ? t.name : '$up > ${t.name}';
   }
 }
 

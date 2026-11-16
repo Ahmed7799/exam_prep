@@ -36,7 +36,7 @@ Rules:
 /// Reads Claude's pasted answer: a JSON object with a "topics" list (or a bare
 /// list), optionally wrapped in a code fence or surrounded by other text.
 List<ParsedTopic> parseClaudeSyllabus(String text) {
-  final json = _extractJson(text);
+  final json = extractJson(text);
   if (json == null) {
     throw SyllabusAiException(
       'Could not find the JSON in what you pasted. Copy Claude\'s whole reply and try again.',
@@ -58,7 +58,9 @@ List<ParsedTopic> parseClaudeSyllabus(String text) {
   return topicsFromToolInput(decoded);
 }
 
-String? _extractJson(String text) {
+/// Finds the JSON object or list inside a pasted reply (code fences and
+/// surrounding text are ignored).
+String? extractJson(String text) {
   final trimmed = text.trim();
   final braceAt = trimmed.indexOf('{');
   final bracketAt = trimmed.indexOf('[');

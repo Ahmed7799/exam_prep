@@ -4,6 +4,7 @@ import '../app_state.dart';
 import '../calc.dart';
 import '../models.dart';
 import '../planner.dart';
+import 'review_screen.dart';
 import 'study_picker_screen.dart';
 import 'study_sheet.dart';
 
@@ -141,6 +142,7 @@ class TodayScreen extends StatelessWidget {
                   ),
                 ),
               if (hasTopics && days > 0) _TodayCard(state: state),
+              if (state.cards.isNotEmpty) _CardsDue(state: state),
             ],
           ),
         );
@@ -330,6 +332,36 @@ class _TodayCard extends StatelessWidget {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _CardsDue extends StatelessWidget {
+  const _CardsDue({required this.state});
+
+  final AppState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final queue = state.reviewQueue;
+    final due = state.dueCards.length;
+    final fresh = queue.length - due;
+    return Card(
+      child: ListTile(
+        leading: const Icon(Icons.style),
+        title: Text(queue.isEmpty ? 'No cards due' : '$due cards due, $fresh new'),
+        subtitle: Text('${state.reviewsToday} reviewed today'),
+        trailing: queue.isEmpty
+            ? null
+            : FilledButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => ReviewScreen(state: state, cards: queue, title: 'Review'),
+                  ),
+                ),
+                child: const Text('Review'),
+              ),
       ),
     );
   }
