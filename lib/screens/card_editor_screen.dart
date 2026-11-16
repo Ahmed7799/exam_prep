@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../models.dart';
 import 'markup_text.dart';
+import 'topic_picker.dart';
 
 /// Create or edit one card.
 class CardEditorScreen extends StatefulWidget {
@@ -147,24 +148,10 @@ class _CardEditorScreenState extends State<CardEditorScreen> {
           : ListView(
               padding: const EdgeInsets.all(16),
               children: [
-                DropdownButtonFormField<int>(
-                  value: leaves.any((t) => t.id == _topicId) ? _topicId : null,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Topic',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    for (final t in leaves)
-                      DropdownMenuItem<int>(
-                        value: t.id,
-                        child: Text(
-                          state.topicPathFor(t.id!),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                  ],
-                  onChanged: (v) => setState(() => _topicId = v),
+                TopicField(
+                  state: state,
+                  topicId: _topicId,
+                  onChanged: (id) => setState(() => _topicId = id),
                 ),
                 const SizedBox(height: 16),
                 TextField(

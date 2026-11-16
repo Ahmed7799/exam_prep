@@ -6,30 +6,15 @@ import '../cards_ai.dart';
 import '../models.dart';
 import '../syllabus_ai.dart';
 import 'markup_text.dart';
+import 'topic_picker.dart';
 
 /// Make cards with Claude in the Claude app: choose the topic and pages, copy
 /// the prompt, run it there with the PDF, paste the reply back here.
 class CardsImportScreen extends StatefulWidget {
-  const CardsImportScreen({
-    super.key,
-    required this.state,
-    this.topicId,
-    this.fromPage,
-    this.toPage,
-    this.pageText,
-    this.sourceId,
-  });
+  const CardsImportScreen({super.key, required this.state, this.topicId});
 
   final AppState state;
   final int? topicId;
-
-  /// Printed page numbers of the range, when coming from the PDF reader.
-  final int? fromPage;
-  final int? toPage;
-
-  /// Text of those pages, read from the PDF, so Claude does not need the file.
-  final String? pageText;
-  final int? sourceId;
 
   @override
   State<CardsImportScreen> createState() => _CardsImportScreenState();
@@ -37,17 +22,12 @@ class CardsImportScreen extends StatefulWidget {
 
 class _CardsImportScreenState extends State<CardsImportScreen> {
   late int? _topicId = widget.topicId;
-  late final _from = TextEditingController(text: widget.fromPage?.toString() ?? '');
-  late final _to = TextEditingController(text: widget.toPage?.toString() ?? '');
-  late bool _includeText = widget.pageText != null;
   final _reply = TextEditingController();
   List<CardDraft>? _drafts;
   String? _error;
 
   @override
   void dispose() {
-    _from.dispose();
-    _to.dispose();
     _reply.dispose();
     super.dispose();
   }
@@ -58,23 +38,12 @@ class _CardsImportScreenState extends State<CardsImportScreen> {
       setState(() => _error = 'Choose the topic first.');
       return;
     }
-    final prompt = buildCardsPrompt(
-      topicName: topic.name,
-      fromPage: int.tryParse(_from.text.trim()),
-      toPage: int.tryParse(_to.text.trim()),
-      pageText: _includeText ? widget.pageText : null,
-    );
+    final prompt = buildCardsPrompt(topicName: topic.name);
     await Clipboard.setData(ClipboardData(text: prompt));
     if (!mounted) return;
     setState(() => _error = null);
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(
-          _includeText
-              ? 'Prompt with the page text copied. Paste it into Claude.'
-              : 'Prompt copied. Paste it into Claude with your PDF.',
-        ),
-      ),
+      const SnackBar(content: Text('Prompt copied. Paste it into Claude with your PDF.')),
     );
   }
 
@@ -108,7 +77,7 @@ class _CardsImportScreenState extends State<CardsImportScreen> {
       setState(() => _error = 'Choose the topic first.');
       return;
     }
-    final n = await widget.state.addCards(_topicId!, drafts, sourceId: widget.sourceId);
+    final n = await widget.state.addCards(_topicId!, drafts);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Added $n cards')));
     Navigator.of(context).pop();
@@ -117,7 +86,6 @@ class _CardsImportScreenState extends State<CardsImportScreen> {
   @override
   Widget build(BuildContext context) {
     final state = widget.state;
-    final leaves = state.orderedLeaves;
     final theme = Theme.of(context);
     final drafts = _drafts;
     final missingPages = drafts?.where((d) => d.page == null).length ?? 0;
@@ -126,69 +94,17 @@ class _CardsImportScreenState extends State<CardsImportScreen> {
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('1. Choose the topic and pages', style: theme.textTheme.titleSmall),
+          Text('1. Choose the topic', style: theme.textTheme.titleSmall),
           const SizedBox(height: 8),
-          DropdownButtonFormField<int>(
-            value: leaves.any((t) => t.id == _topicId) ? _topicId : null,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Topic', border: OutlineInputBorder()),
-            items: [
-              for (final t in leaves)
-                DropdownMenuItem<int>(
-                  value: t.id,
-                  child: Text(state.topicPathFor(t.id!), overflow: TextOverflow.ellipsis),
-                ),
-            ],
-            onChanged: (v) => setState(() => _topicId = v),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _from,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'From page',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: TextField(
-                  controller: _to,
-                  keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'To page',
-                    border: OutlineInputBorder(),
-                  ),
-                ),
-              ),
-            ],
+          TopicField(
+            state: state,
+            topicId: _topicId,
+            onChanged: (id) => setState(() => _topicId = id),
           ),
           const SizedBox(height: 16),
           Text('2. Run it in the Claude app', style: theme.textTheme.titleSmall),
           const SizedBox(height: 4),
-          if (widget.pageText != null) ...[
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              value: _includeText,
-              onChanged: (v) => setState(() => _includeText = v),
-              title: const Text('Put the page text in the prompt'),
-              subtitle: Text(
-                _includeText
-                    ? 'No need to attach the PDF. For pages with diagrams or tables as images, '
-                        'attach screenshots of those pages too.'
-                    : 'Attach the PDF in Claude yourself.',
-              ),
-            ),
-            Text(
-              '${widget.pageText!.length} characters read from the pages.',
-              style: theme.textTheme.bodySmall,
-            ),
-          ] else
-            const Text('Copy the prompt, open Claude, attach the PDF and paste the prompt.'),
+          const Text('Copy the prompt, open Claude, attach the PDF and paste the prompt.'),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _copyPrompt,

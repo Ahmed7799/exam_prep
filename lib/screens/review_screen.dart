@@ -4,7 +4,6 @@ import '../app_state.dart';
 import '../models.dart';
 import 'card_editor_screen.dart';
 import 'markup_text.dart';
-import 'pdf_reader_screen.dart';
 
 /// Works through a list of cards.
 ///
@@ -166,7 +165,12 @@ class _ReviewScreenState extends State<ReviewScreen> {
                       MarkupText(card.back, style: theme.textTheme.bodyLarge),
                       if (card.page != null) ...[
                         const SizedBox(height: 12),
-                        _PageLink(state: state, card: card),
+                        Text(
+                          'Page ${card.page}',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ],
                       const SizedBox(height: 16),
                       Wrap(
@@ -251,41 +255,6 @@ class _RateButton extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-/// "Page 42", which opens the PDF at that page when the card knows its PDF.
-class _PageLink extends StatelessWidget {
-  const _PageLink({required this.state, required this.card});
-
-  final AppState state;
-  final Flashcard card;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final source = state.sourceById(card.sourceId);
-    final label = 'Page ${card.page}';
-    if (source == null) {
-      return Text(label, style: theme.textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600));
-    }
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: TextButton.icon(
-        style: TextButton.styleFrom(padding: EdgeInsets.zero),
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(
-            builder: (_) => PdfReaderScreen(
-              state: state,
-              source: source,
-              printedPage: card.page,
-            ),
-          ),
-        ),
-        icon: const Icon(Icons.open_in_new, size: 16),
-        label: Text('$label in ${source.title}'),
       ),
     );
   }
