@@ -35,9 +35,11 @@ class CardsScreen extends StatelessWidget {
       final dir = await getTemporaryDirectory();
       final file = File('${dir.path}/$name');
       await file.writeAsString(text);
-      await Share.shareXFiles(
-        [XFile(file.path, mimeType: anki ? 'text/plain' : 'text/csv')],
-        subject: name,
+      await SharePlus.instance.share(
+        ShareParams(
+          files: [XFile(file.path, mimeType: anki ? 'text/plain' : 'text/csv')],
+          subject: name,
+        ),
       );
     } catch (_) {
       await Clipboard.setData(ClipboardData(text: text));
