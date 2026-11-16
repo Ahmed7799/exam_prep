@@ -1,129 +1,149 @@
 import 'models.dart';
 
-/// One slice of a topic scheduled on a day.
-class PlanItem {
-  PlanItem(this.topic, this.hours, this.finishes);
-
-  final Topic topic;
-  final double hours;
-
-  /// True when this slice completes the topic.
-  final bool finishes;
-}
-
-class PlanDay {
-  PlanDay(this.date, this.capacity, this.isRevision);
-
-  final DateTime date;
-  final double capacity;
-
-  /// Revision days are kept free of new topics unless the syllabus needs them.
-  final bool isRevision;
-  final List<PlanItem> items = [];
-
-  double get used => items.fold(0.0, (sum, i) => sum + i.hours);
-}
-
-class Plan {
-  Plan(this.days, this.finishDates, this.overflow, this.revisionDaysUsed);
-
-  final List<PlanDay> days;
-
-  /// Topic id -> day it finishes.
-  final Map<int, DateTime> finishDates;
-
-  /// Topics that do not fit before the exam, in order.
-  final List<Topic> overflow;
-
-  /// True when new topics had to be pushed into the revision days.
-  final bool revisionDaysUsed;
-
-  double get overflowHours => overflow.fold(0.0, (sum, t) => sum + t.sizeHours);
-
-  bool get fits => overflow.isEmpty;
-
-  DateTime? get lastFinish {
-    DateTime? last;
-    for (final d in finishDates.values) {
-      if (last == null || d.isAfter(last)) last = d;
-    }
-    return last;
-  }
-}
-
 DateTime dayOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 
-/// Spreads the [remaining] topics (already in study order) over the days from
-/// [today] up to the day before the exam, filling each day to its capacity.
-/// The last [revisionShare] of the study days are held back for revision and
-/// only used for new topics if the syllabus would not fit otherwise.
-Plan buildPlan({
+/// Study hours you set aside for [day] (0 on a rest day).
+double capacityOn(Exam exam, DateTime day) {
+  if (exam.daysOff.contains(day.weekday)) return 0;
+  final hours = day.weekday >= DateTime.saturday ? exam.weekendHours : exam.weekdayHours;
+  return hours < 0 ? 0 : hours;
+}
+
+/// Study hours from [from] to [to], both included.
+double capacityBetween(Exam exam, DateTime from, DateTime to) {
+  var hours = 0.0;
+  var day = dayOnly(from);
+  final last = dayOnly(to);
+  while (!day.isAfter(last)) {
+    hours += capacityOn(exam, day);
+    day = DateTime(day.year, day.month, day.day + 1);
+  }
+  return hours;
+}
+
+/// Can the remaining syllabus be finished before the exam at your study hours?
+class Forecast {
+  Forecast({
+    required this.remaining,
+    required this.totalCapacity,
+    required this.usable,
+    required this.studyDays,
+    required this.finish,
+  });
+
+  /// Hours of study still needed.
+  final double remaining;
+
+  /// All study hours from today up to the day before the exam.
+  final double totalCapacity;
+
+  /// Study hours left after holding back time for revision.
+  final double usable;
+
+  /// Days with study hours from today up to the day before the exam.
+  final int studyDays;
+
+  /// The day the remaining hours run out at full capacity (null if never).
+  final DateTime? finish;
+
+  bool get done => remaining <= 0.0001;
+
+  /// Fits with the revision days still free.
+  bool get fits => remaining <= usable + 0.0001;
+
+  /// Fits only by using the revision days.
+  bool get canFinish => remaining <= totalCapacity + 0.0001;
+
+  double get shortBy => canFinish ? 0 : remaining - totalCapacity;
+
+  /// Hours per study day needed to finish on time.
+  double get needPerDay => studyDays == 0 ? 0 : remaining / studyDays;
+}
+
+Forecast buildForecast({
   required Exam exam,
   required DateTime today,
-  required List<Topic> remaining,
+  required double remaining,
   double revisionShare = 0.15,
 }) {
   final start = dayOnly(today);
   final end = dayOnly(exam.date);
   final span = end.difference(start).inDays;
-
-  final studyDays = <PlanDay>[];
+  var total = 0.0;
+  var days = 0;
+  DateTime? finish;
   for (var i = 0; i < span; i++) {
-    final date = DateTime(start.year, start.month, start.day + i);
-    if (exam.daysOff.contains(date.weekday)) continue;
-    final hours =
-        date.weekday >= DateTime.saturday ? exam.weekendHours : exam.weekdayHours;
-    if (hours <= 0) continue;
-    studyDays.add(PlanDay(date, hours, false));
-  }
-
-  final revisionCount =
-      studyDays.length >= 10 ? (studyDays.length * revisionShare).floor() : 0;
-  final learnCount = studyDays.length - revisionCount;
-  final days = <PlanDay>[
-    for (var i = 0; i < studyDays.length; i++)
-      PlanDay(studyDays[i].date, studyDays[i].capacity, i >= learnCount),
-  ];
-
-  final finishDates = <int, DateTime>{};
-  final overflow = <Topic>[];
-  var dayIndex = 0;
-  var usedRevision = false;
-
-  for (final topic in remaining) {
-    var left = topic.sizeHours <= 0 ? 0.25 : topic.sizeHours;
-    while (left > 0.0001 && dayIndex < days.length) {
-      final day = days[dayIndex];
-      final free = day.capacity - day.used;
-      if (free <= 0.0001) {
-        dayIndex++;
-        continue;
-      }
-      final take = left < free ? left : free;
-      left -= take;
-      final finishes = left <= 0.0001;
-      day.items.add(PlanItem(topic, take, finishes));
-      if (day.isRevision) usedRevision = true;
-      if (finishes && topic.id != null) finishDates[topic.id!] = day.date;
+    final day = DateTime(start.year, start.month, start.day + i);
+    final cap = capacityOn(exam, day);
+    if (cap <= 0) continue;
+    days++;
+    total += cap;
+    if (finish == null && remaining > 0.0001 && total + 0.0001 >= remaining) {
+      finish = day;
     }
-    if (left > 0.0001) overflow.add(topic);
   }
-
-  return Plan(days, finishDates, overflow, usedRevision);
+  final usable = days >= 10 ? total * (1 - revisionShare) : total;
+  return Forecast(
+    remaining: remaining,
+    totalCapacity: total,
+    usable: usable,
+    studyDays: days,
+    finish: finish,
+  );
 }
 
-/// How worried the app should be, from how far behind the plan you are.
+/// What you planned to study against what you logged over the last week.
+class WeekPace {
+  WeekPace(this.planned, this.logged, this.days);
+
+  final double planned;
+  final double logged;
+
+  /// Study days in the window.
+  final int days;
+
+  double get shortfall => planned > logged ? planned - logged : 0;
+}
+
+/// Looks at the days from a week ago (or [Exam.startDate], whichever is later)
+/// up to yesterday. Today is left out so a morning is not counted as a miss.
+WeekPace trailingPace({
+  required Exam exam,
+  required DateTime today,
+  required Map<DateTime, double> loggedByDay,
+}) {
+  final t = dayOnly(today);
+  final weekAgo = DateTime(t.year, t.month, t.day - 7);
+  final started = exam.startDate == null ? t : dayOnly(exam.startDate!);
+  final from = started.isAfter(weekAgo) ? started : weekAgo;
+  final to = DateTime(t.year, t.month, t.day - 1);
+  var planned = 0.0;
+  var logged = 0.0;
+  var days = 0;
+  var day = from;
+  while (!day.isAfter(to)) {
+    final cap = capacityOn(exam, day);
+    if (cap > 0) days++;
+    planned += cap;
+    logged += loggedByDay[day] ?? 0;
+    day = DateTime(day.year, day.month, day.day + 1);
+  }
+  return WeekPace(planned, logged, days);
+}
+
+/// How worried the app should be.
 enum Alert { onTrack, nudge, warning, alarm }
 
-/// [overdueHours] is the size of unfinished topics whose due date has passed;
-/// [dailyHours] is a typical study day's length.
+/// [behindHours] is the shortfall against your own study hours over the last
+/// week; [dailyHours] is a typical study day's length; [fits] says whether the
+/// syllabus can still be finished before the exam.
 Alert alertFor({
-  required double overdueHours,
+  required double behindHours,
   required double dailyHours,
   required bool fits,
 }) {
-  if (overdueHours <= 0.0001) return fits ? Alert.onTrack : Alert.warning;
-  final daysBehind = dailyHours <= 0 ? 99.0 : overdueHours / dailyHours;
+  if (behindHours <= 0.0001) return fits ? Alert.onTrack : Alert.warning;
+  final daysBehind = dailyHours <= 0 ? 99.0 : behindHours / dailyHours;
   if (daysBehind > 3 || !fits) return Alert.alarm;
   if (daysBehind > 1) return Alert.warning;
   return Alert.nudge;

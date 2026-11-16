@@ -4,10 +4,10 @@ import '../app_state.dart';
 import '../calc.dart';
 import '../models.dart';
 import '../planner.dart';
-import 'stage_sheet.dart';
+import 'study_picker_screen.dart';
+import 'study_sheet.dart';
 
-/// Home tab: countdown, how much syllabus is left against the hours you have.
-/// The daily slate itself arrives with the planner in phase 2.
+/// Home tab: countdown, today's study hours, and the chapter picker.
 class TodayScreen extends StatelessWidget {
   const TodayScreen({super.key, required this.state});
 
@@ -140,7 +140,7 @@ class TodayScreen extends StatelessWidget {
                     ),
                   ),
                 ),
-              if (hasTopics && days > 0) _Slate(state: state),
+              if (hasTopics && days > 0) _TodayCard(state: state),
             ],
           ),
         );
@@ -177,22 +177,35 @@ class _AlertBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final level = state.alert;
     if (level == Alert.onTrack) return const SizedBox.shrink();
-    final (Color color, IconData icon, String title) = switch (level) {
-      Alert.nudge => (Colors.amber.shade800, Icons.info_outline, 'Slightly behind'),
-      Alert.warning => (Colors.orange.shade800, Icons.warning_amber, 'You are falling behind'),
-      _ => (Colors.red.shade700, Icons.error_outline, 'Serious risk of missing the plan'),
-    };
-    final behind = state.hasPlan && state.overdue.isNotEmpty;
-    final plan = state.plan;
+    final Color color;
+    final IconData icon;
+    final String title;
+    switch (level) {
+      case Alert.nudge:
+        color = Colors.amber.shade800;
+        icon = Icons.info_outline;
+        title = 'Slightly behind';
+      case Alert.warning:
+        color = Colors.orange.shade800;
+        icon = Icons.warning_amber;
+        title = 'You are falling behind';
+      default:
+        color = Colors.red.shade700;
+        icon = Icons.error_outline;
+        title = 'Serious risk of missing the exam plan';
+    }
+    final pace = state.weekPace;
+    final f = state.forecast;
     final message = StringBuffer();
-    if (behind) {
+    if (pace.shortfall > 0.0001) {
       message.write(
-        '${state.overdue.length} topics (${formatHours(state.overdueHours)}) are past their planned date. ',
+        'You logged ${formatHours(pace.logged)} of ${formatHours(pace.planned)} '
+        'planned over the last ${pace.days} study days. ',
       );
     }
-    if (!plan.fits) {
+    if (!f.canFinish) {
       message.write(
-        '${formatHours(plan.overflowHours)} of syllabus will not fit before the exam at this pace. ',
+        '${formatHours(f.shortBy)} of syllabus will not fit before the exam at your current hours. ',
       );
     }
     if (message.isEmpty) message.write('Check the Plan tab.');
@@ -211,126 +224,113 @@ class _AlertBanner extends StatelessWidget {
   }
 }
 
-class _Slate extends StatelessWidget {
-  const _Slate({required this.state});
+class _TodayCard extends StatelessWidget {
+  const _TodayCard({required this.state});
 
   final AppState state;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    if (state.remainingLeaves.isEmpty) {
-      return const Card(
-        child: ListTile(
-          leading: Icon(Icons.celebration_outlined),
-          title: Text('All topics complete'),
-          subtitle: Text('Use the time left for revision.'),
-        ),
-      );
-    }
-    if (!state.hasPlan) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('No plan yet', style: theme.textTheme.titleMedium),
-              const SizedBox(height: 6),
-              const Text(
-                'Save a plan and the app will hold you to it, day by day.',
-              ),
-              const SizedBox(height: 10),
-              FilledButton.icon(
-                onPressed: state.replan,
-                icon: const Icon(Icons.flag),
-                label: const Text('Make my plan'),
-              ),
-            ],
-          ),
-        ),
-      );
-    }
-    final today = state.todayPlan;
-    final todayIds = {for (final i in today?.items ?? const <PlanItem>[]) i.topic.id};
-    final overdueAll = state.overdue;
-    final overdue = overdueAll.where((t) => !todayIds.contains(t.id)).toList();
+    final target = state.todayTarget;
+    final done = state.hoursOn(DateTime.now());
+    final fraction = target > 0 ? (done / target) : (done > 0 ? 1.0 : 0.0);
+    final suggested = state.suggestedPaper;
+    final started = state.inProgress.take(3).toList();
+    final todays = state.logsOn(DateTime.now());
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Today\'s slate', style: theme.textTheme.titleMedium),
-            if (state.needsReplan)
-              Padding(
-                padding: const EdgeInsets.only(top: 6),
-                child: Row(
-                  children: [
-                    const Expanded(
-                      child: Text('Topics changed since you saved the plan.'),
-                    ),
-                    TextButton(onPressed: state.replan, child: const Text('Re-plan')),
-                  ],
-                ),
+            Text('Today', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              target > 0
+                  ? '${formatHours(done)} of ${formatHours(target)} studied'
+                  : (done > 0
+                      ? '${formatHours(done)} studied on a rest day'
+                      : 'Rest day. Come back tomorrow.'),
+              style: theme.textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            LinearProgressIndicator(
+              value: fraction > 1 ? 1.0 : fraction,
+              minHeight: 8,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            if (done > 0) ...[
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: [
+                  for (final p in state.papers)
+                    if (state.hoursOn(DateTime.now(), paper: p) > 0)
+                      Chip(
+                        label: Text(
+                          '${paperShort(p)}: ${formatHours(state.hoursOn(DateTime.now(), paper: p))}',
+                        ),
+                      ),
+                ],
               ),
-            if (overdue.isNotEmpty) ...[
+            ],
+            if (suggested != null) ...[
               const SizedBox(height: 8),
               Text(
-                'Behind plan',
-                style: TextStyle(
-                  color: theme.colorScheme.error,
-                  fontWeight: FontWeight.w600,
-                ),
+                '${paperShort(suggested)} got less time this week. Consider a '
+                '${paperShort(suggested)} chapter today.',
+                style: theme.textTheme.bodySmall,
               ),
-              for (final t in overdue.take(5))
-                _TopicTile(state: state, topic: t, subtitle: 'Was due ${formatDay(t.dueDate!)}'),
-              if (overdue.length > 5) Text('and ${overdue.length - 5} more in Syllabus.'),
             ],
-            const SizedBox(height: 8),
-            if (today == null || today.items.isEmpty)
-              Text(
-                today == null
-                    ? 'Rest day. Come back tomorrow.'
-                    : 'Nothing new planned. Review your cards and weak topics.',
-              )
-            else ...[
-              Text(
-                'Planned for today (${formatHours(today.used)})',
-                style: const TextStyle(fontWeight: FontWeight.w600),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => StudyPickerScreen(state: state),
+                  ),
+                ),
+                icon: const Icon(Icons.menu_book),
+                label: const Text('What are you studying?'),
               ),
-              for (final item in today.items)
-                _TopicTile(
-                  state: state,
-                  topic: item.topic,
-                  subtitle: '${overdueAll.any((t) => t.id == item.topic.id) ? 'Behind plan, ' : ''}'
-                      '${formatHours(item.hours)}${item.finishes ? '' : ', continues tomorrow'}',
+            ),
+            if (started.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('Continue', style: theme.textTheme.titleSmall),
+              for (final t in started)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  leading: CircleAvatar(backgroundColor: t.stage.color, radius: 7),
+                  title: Text(t.name),
+                  subtitle: Text(
+                    '${paperShort(state.paperOf(t))} \u00b7 '
+                    '${formatHours(state.loggedHoursOf(t))} of ${formatHours(t.sizeHours)}',
+                  ),
+                  onTap: () => showStudySheet(context, state, t),
+                ),
+            ],
+            if (todays.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              Text('Logged today', style: theme.textTheme.titleSmall),
+              for (final l in todays)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: Text(state.topicById(l.topicId)?.name ?? 'Removed topic'),
+                  subtitle: Text(formatHours(l.hours)),
+                  trailing: IconButton(
+                    tooltip: 'Remove this entry',
+                    icon: const Icon(Icons.close),
+                    onPressed: () => state.deleteLog(l),
+                  ),
                 ),
             ],
           ],
         ),
       ),
-    );
-  }
-}
-
-class _TopicTile extends StatelessWidget {
-  const _TopicTile({required this.state, required this.topic, required this.subtitle});
-
-  final AppState state;
-  final Topic topic;
-  final String subtitle;
-
-  @override
-  Widget build(BuildContext context) {
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      leading: CircleAvatar(backgroundColor: topic.stage.color, radius: 7),
-      title: Text(topic.name),
-      subtitle: Text('$subtitle · ${topic.stage.label}'),
-      trailing: const Icon(Icons.more_horiz),
-      onTap: () => pickStage(context, state, topic),
     );
   }
 }

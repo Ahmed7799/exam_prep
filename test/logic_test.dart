@@ -127,76 +127,142 @@ Let me know if you want the next part.
     expect(isComplete(Stage.reviewing), isFalse);
   });
 
-  group('buildPlan', () {
-    Exam exam(DateTime date, {Set<int> off = const {}}) => Exam(
+  group('forecast', () {
+    Exam exam(DateTime date, {Set<int> off = const {}, DateTime? start}) => Exam(
           name: 'Test',
           date: date,
           weekdayHours: 2,
           weekendHours: 2,
           daysOff: off,
+          startDate: start,
         );
 
-    Topic topic(int id, double hours) =>
-        Topic(id: id, examId: 1, name: 'T$id', sizeHours: hours);
-
-    test('fills days in order and splits a long topic', () {
-      // 5 study days (Mon 16 to Fri 20 Nov), 2h each, exam on Sat 21.
-      final plan = buildPlan(
+    test('finishes on the day the hours run out', () {
+      // Mon 16 to Fri 20 Nov: five study days of 2h.
+      final f = buildForecast(
         exam: exam(DateTime(2026, 11, 21)),
         today: DateTime(2026, 11, 16),
-        remaining: [topic(1, 3), topic(2, 1), topic(3, 2)],
+        remaining: 7,
       );
-      expect(plan.fits, isTrue);
-      expect(plan.days.length, 5);
-      // T1 takes all of day 1 and 1h of day 2, then T2 finishes day 2.
-      expect(plan.days[0].items.single.hours, 2);
-      expect(plan.days[0].items.single.finishes, isFalse);
-      expect(plan.days[1].items.map((i) => i.topic.id).toList(), [1, 2]);
-      expect(plan.finishDates[1], DateTime(2026, 11, 17));
-      expect(plan.finishDates[2], DateTime(2026, 11, 17));
-      expect(plan.finishDates[3], DateTime(2026, 11, 18));
+      expect(f.studyDays, 5);
+      expect(f.totalCapacity, 10);
+      expect(f.fits, isTrue);
+      expect(f.finish, DateTime(2026, 11, 19)); // 2, 4, 6, 8h by Thursday
+      expect(f.needPerDay, 1.4);
+    });
+
+    test('reports when it cannot fit', () {
+      final f = buildForecast(
+        exam: exam(DateTime(2026, 11, 21)),
+        today: DateTime(2026, 11, 16),
+        remaining: 11,
+      );
+      expect(f.canFinish, isFalse);
+      expect(f.fits, isFalse);
+      expect(f.finish, isNull);
+      expect(f.shortBy, 1);
+    });
+
+    test('keeps revision time free on a long runway', () {
+      // 15 study days = 30h; 15% held back leaves 25.5h.
+      final today = DateTime(2026, 11, 16);
+      final date = DateTime(2026, 12, 1);
+      final ok = buildForecast(exam: exam(date), today: today, remaining: 20);
+      expect(ok.fits, isTrue);
+      final tight = buildForecast(exam: exam(date), today: today, remaining: 27);
+      expect(tight.fits, isFalse);
+      expect(tight.canFinish, isTrue);
+      expect(tight.finish, DateTime(2026, 11, 29)); // 14 days reach 28h
     });
 
     test('skips rest days', () {
-      final plan = buildPlan(
+      final f = buildForecast(
         exam: exam(DateTime(2026, 11, 21), off: {2}), // Tuesday off
         today: DateTime(2026, 11, 16),
-        remaining: [topic(1, 4)],
+        remaining: 4,
       );
-      expect(plan.days.length, 4);
-      expect(plan.finishDates[1], DateTime(2026, 11, 18)); // Mon + Wed
+      expect(f.studyDays, 4);
+      expect(f.finish, DateTime(2026, 11, 18)); // Mon + Wed
+    });
+  });
+
+  group('trailingPace', () {
+    Exam exam({Set<int> off = const {}, DateTime? start}) => Exam(
+          name: 'Test',
+          date: DateTime(2026, 12, 20),
+          weekdayHours: 2,
+          weekendHours: 2,
+          daysOff: off,
+          startDate: start,
+        );
+    final today = DateTime(2026, 11, 16); // Monday
+
+    test('compares logged hours with planned hours since you started', () {
+      final pace = trailingPace(
+        exam: exam(start: DateTime(2026, 11, 10)),
+        today: today,
+        loggedByDay: {DateTime(2026, 11, 10): 2, DateTime(2026, 11, 12): 1},
+      );
+      // 10 to 15 Nov is six days of 2h.
+      expect(pace.days, 6);
+      expect(pace.planned, 12);
+      expect(pace.logged, 3);
+      expect(pace.shortfall, 9);
     });
 
-    test('reports what does not fit', () {
-      final plan = buildPlan(
-        exam: exam(DateTime(2026, 11, 18)), // two study days = 4h
-        today: DateTime(2026, 11, 16),
-        remaining: [topic(1, 3), topic(2, 3)],
+    test('never looks back more than a week', () {
+      final pace = trailingPace(
+        exam: exam(start: DateTime(2026, 9, 1)),
+        today: today,
+        loggedByDay: {},
       );
-      expect(plan.fits, isFalse);
-      expect(plan.overflow.map((t) => t.id).toList(), [2]);
-      expect(plan.overflowHours, 3);
+      expect(pace.days, 7); // 9 to 15 Nov
     });
 
-    test('holds back revision days but uses them if needed', () {
-      final date = DateTime(2026, 12, 1);
-      final today = DateTime(2026, 11, 16); // 15 study days = 30h
-      final easy = buildPlan(exam: exam(date), today: today, remaining: [topic(1, 20)]);
-      expect(easy.revisionDaysUsed, isFalse);
-      expect(easy.days.where((d) => d.isRevision).length, 2);
-      final tight = buildPlan(exam: exam(date), today: today, remaining: [topic(1, 29)]);
-      expect(tight.fits, isTrue);
-      expect(tight.revisionDaysUsed, isTrue);
+    test('has nothing to judge on the first day', () {
+      final pace = trailingPace(
+        exam: exam(start: today),
+        today: today,
+        loggedByDay: {},
+      );
+      expect(pace.planned, 0);
+      expect(pace.shortfall, 0);
+    });
+
+    test('does not count rest days', () {
+      final pace = trailingPace(
+        exam: exam(start: DateTime(2026, 11, 10), off: {7}), // Sunday off
+        today: today,
+        loggedByDay: {},
+      );
+      expect(pace.days, 5); // 10 to 14 Nov, 15 Nov is a Sunday
+      expect(pace.planned, 10);
     });
   });
 
   group('alertFor', () {
     test('escalates with days behind', () {
-      expect(alertFor(overdueHours: 0, dailyHours: 3, fits: true), Alert.onTrack);
-      expect(alertFor(overdueHours: 2, dailyHours: 3, fits: true), Alert.nudge);
-      expect(alertFor(overdueHours: 5, dailyHours: 3, fits: true), Alert.warning);
-      expect(alertFor(overdueHours: 12, dailyHours: 3, fits: true), Alert.alarm);
-      expect(alertFor(overdueHours: 0, dailyHours: 3, fits: false), Alert.warning);
+      expect(alertFor(behindHours: 0, dailyHours: 3, fits: true), Alert.onTrack);
+      expect(alertFor(behindHours: 2, dailyHours: 3, fits: true), Alert.nudge);
+      expect(alertFor(behindHours: 5, dailyHours: 3, fits: true), Alert.warning);
+      expect(alertFor(behindHours: 12, dailyHours: 3, fits: true), Alert.alarm);
+      expect(alertFor(behindHours: 0, dailyHours: 3, fits: false), Alert.warning);
+      expect(alertFor(behindHours: 1, dailyHours: 3, fits: false), Alert.alarm);
+    });
+  });
+
+  group('papers in the Claude reply', () {
+    test('reads the paper on top-level sections only', () {
+      final items = topicsFromToolInput({
+        'topics': [
+          {'name': 'Polity', 'level': 0, 'paper': 1, 'size_hours': 0},
+          {'name': 'Rights', 'level': 1, 'paper': 2, 'size_hours': 2},
+          {'name': 'Physics', 'level': 0, 'paper': 2, 'size_hours': 2},
+          {'name': 'Maths', 'level': 0, 'paper': 9, 'size_hours': 2},
+          {'name': 'Law', 'level': 0, 'size_hours': 2},
+        ],
+      });
+      expect(items.map((e) => e.paper).toList(), [1, 0, 2, 0, 0]);
     });
   });
 }

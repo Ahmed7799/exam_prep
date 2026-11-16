@@ -7,6 +7,7 @@ class ParsedTopic {
     this.sizeHours = 1,
     this.difficulty = 2,
     this.importance = 0,
+    this.paper = 0,
   });
 
   final String name;
@@ -15,12 +16,16 @@ class ParsedTopic {
   final int difficulty;
   final int importance;
 
+  /// 1 = General Studies, 2 = Core subject, 0 = not given. Set on level 0 only.
+  final int paper;
+
   ParsedTopic copyWith({double? sizeHours}) => ParsedTopic(
         name,
         level,
         sizeHours: sizeHours ?? this.sizeHours,
         difficulty: difficulty,
         importance: importance,
+        paper: paper,
       );
 }
 

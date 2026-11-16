@@ -40,6 +40,7 @@ class Exam {
     required this.weekdayHours,
     required this.weekendHours,
     required this.daysOff,
+    this.startDate,
   });
 
   final int? id;
@@ -51,6 +52,9 @@ class Exam {
   /// Weekday numbers that are rest days: 1 = Monday ... 7 = Sunday.
   final Set<int> daysOff;
 
+  /// The day you started tracking; the behind-pace check never looks earlier.
+  final DateTime? startDate;
+
   Map<String, Object?> toMap() => {
         if (id != null) 'id': id,
         'name': name,
@@ -58,6 +62,7 @@ class Exam {
         'weekday_hours': weekdayHours,
         'weekend_hours': weekendHours,
         'days_off': (daysOff.toList()..sort()).join(','),
+        if (startDate != null) 'start_date': _isoDate(startDate!),
       };
 
   factory Exam.fromMap(Map<String, Object?> m) {
@@ -69,6 +74,7 @@ class Exam {
       weekdayHours: (m['weekday_hours'] as num).toDouble(),
       weekendHours: (m['weekend_hours'] as num).toDouble(),
       daysOff: off.isEmpty ? <int>{} : off.split(',').map(int.parse).toSet(),
+      startDate: m['start_date'] == null ? null : DateTime.parse(m['start_date'] as String),
     );
   }
 }
@@ -87,7 +93,7 @@ class Topic {
     this.importance = 0,
     this.stage = Stage.notStarted,
     this.sortOrder = 0,
-    this.dueDate,
+    this.paper = 0,
   });
 
   final int? id;
@@ -106,8 +112,9 @@ class Topic {
   final Stage stage;
   final int sortOrder;
 
-  /// The day the plan says this topic should be finished by (null = not planned).
-  final DateTime? dueDate;
+  /// 1 = General Studies, 2 = Core subject, 0 = not set. Only top-level topics
+  /// carry it; subtopics belong to the paper of their top-level topic.
+  final int paper;
 
   Topic copyWith({
     String? name,
@@ -115,6 +122,7 @@ class Topic {
     int? difficulty,
     int? importance,
     Stage? stage,
+    int? paper,
   }) =>
       Topic(
         id: id,
@@ -126,7 +134,7 @@ class Topic {
         importance: importance ?? this.importance,
         stage: stage ?? this.stage,
         sortOrder: sortOrder,
-        dueDate: dueDate,
+        paper: paper ?? this.paper,
       );
 
   Map<String, Object?> toMap() => {
@@ -139,7 +147,7 @@ class Topic {
         'weightage': importance,
         'stage': stage.index,
         'sort_order': sortOrder,
-        'due_date': dueDate == null ? null : _isoDate(dueDate!),
+        'paper': paper,
       };
 
   factory Topic.fromMap(Map<String, Object?> m) => Topic(
@@ -152,9 +160,45 @@ class Topic {
         importance: m['weightage'] as int,
         stage: _stageFromIndex(m['stage'] as int),
         sortOrder: m['sort_order'] as int,
-        dueDate: m['due_date'] == null ? null : DateTime.parse(m['due_date'] as String),
+        paper: (m['paper'] as int?) ?? 0,
       );
 }
 
 Stage _stageFromIndex(int i) =>
     (i < 0 || i >= Stage.values.length) ? Stage.notStarted : Stage.values[i];
+
+String paperName(int paper) => switch (paper) {
+      1 => 'Paper 1 · General Studies',
+      2 => 'Paper 2 · Core subject',
+      _ => 'No paper set',
+    };
+
+String paperShort(int paper) => switch (paper) {
+      1 => 'Paper 1',
+      2 => 'Paper 2',
+      _ => 'No paper',
+    };
+
+/// Hours you logged on one topic on one day.
+class StudyLog {
+  StudyLog({this.id, required this.topicId, required this.day, required this.hours});
+
+  final int? id;
+  final int topicId;
+  final DateTime day;
+  final double hours;
+
+  Map<String, Object?> toMap() => {
+        if (id != null) 'id': id,
+        'topic_id': topicId,
+        'day': _isoDate(day),
+        'hours': hours,
+      };
+
+  factory StudyLog.fromMap(Map<String, Object?> m) => StudyLog(
+        id: m['id'] as int?,
+        topicId: m['topic_id'] as int,
+        day: DateTime.parse(m['day'] as String),
+        hours: (m['hours'] as num).toDouble(),
+      );
+}

@@ -12,8 +12,10 @@ class AppState extends ChangeNotifier {
   List<Topic> topics = [];
   Map<int?, List<Topic>> _children = {};
 
-  Plan? _plan;
-  DateTime _planDay = DateTime(2000);
+  List<StudyLog> logs = [];
+  Map<int, Topic> _byId = {};
+  Map<int, double> _loggedByTopic = {};
+  Map<DateTime, double> _loggedByDay = {};
 
   Future<void> load() => _reload();
 
@@ -21,8 +23,16 @@ class AppState extends ChangeNotifier {
     final e = await AppDb.instance.getExam();
     exam = e;
     topics = e == null ? [] : await AppDb.instance.getTopics(e.id!);
+    logs = e == null ? [] : await AppDb.instance.getLogs(e.id!);
     _children = {};
-    _plan = null;
+    _byId = {for (final t in topics) t.id!: t};
+    _loggedByTopic = {};
+    _loggedByDay = {};
+    for (final l in logs) {
+      _loggedByTopic[l.topicId] = (_loggedByTopic[l.topicId] ?? 0) + l.hours;
+      final d = dayOnly(l.day);
+      _loggedByDay[d] = (_loggedByDay[d] ?? 0) + l.hours;
+    }
     for (final t in topics) {
       (_children[t.parentId] ??= []).add(t);
     }
@@ -155,20 +165,53 @@ class AppState extends ChangeNotifier {
   double get availableHours =>
       exam == null ? 0 : availableStudyHours(exam!, DateTime.now());
 
-  double get remainingHours => leaves
-      .where((t) => !isComplete(t.stage))
-      .fold(0.0, (sum, t) => sum + t.sizeHours);
+  // ---- Papers and logged hours ----
 
-  // ---- Planner ----
+  /// The paper a topic belongs to: the paper set on its top-level topic.
+  int paperOf(Topic t) {
+    var cur = t;
+    var guard = 0;
+    while (cur.parentId != null && guard < 50) {
+      final parent = _byId[cur.parentId];
+      if (parent == null) break;
+      cur = parent;
+      guard++;
+    }
+    return cur.paper;
+  }
 
-  /// Topics you still have to study, in syllabus order.
-  List<Topic> get remainingLeaves {
+  /// Names of the topics above [t], like "Polity > Fundamental Rights".
+  String pathOf(Topic t) {
+    final names = <String>[];
+    var cur = t;
+    var guard = 0;
+    while (cur.parentId != null && guard < 50) {
+      final parent = _byId[cur.parentId];
+      if (parent == null) break;
+      names.insert(0, parent.name);
+      cur = parent;
+      guard++;
+    }
+    return names.join(' > ');
+  }
+
+  double loggedHoursOf(Topic t) => _loggedByTopic[t.id] ?? 0;
+
+  /// Study time still needed for a topic: its size minus what you logged.
+  double remainingOf(Topic t) {
+    if (isComplete(t.stage)) return 0;
+    final left = t.sizeHours - loggedHoursOf(t);
+    return left > 0 ? left : 0;
+  }
+
+  /// All topics you study directly, in syllabus order.
+  List<Topic> get orderedLeaves {
     final out = <Topic>[];
     void walk(int? parent) {
       for (final t in childrenOf(parent)) {
         if (hasChildren(t)) {
           walk(t.id);
-        } else if (!isComplete(t.stage)) {
+        } else {
           out.add(t);
         }
       }
@@ -178,47 +221,112 @@ class AppState extends ChangeNotifier {
     return out;
   }
 
-  /// The schedule projected from today with what is left. It is rebuilt
-  /// whenever topics change, so it always matches reality.
-  Plan get plan {
-    final e = exam;
-    final today = dayOnly(DateTime.now());
-    if (_plan == null || _planDay != today) {
-      _planDay = today;
-      _plan = e == null
-          ? Plan([], {}, [], false)
-          : buildPlan(exam: e, today: today, remaining: remainingLeaves);
-    }
-    return _plan!;
+  List<Topic> get remainingLeaves =>
+      orderedLeaves.where((t) => !isComplete(t.stage)).toList();
+
+  double get remainingHours =>
+      orderedLeaves.fold(0.0, (sum, t) => sum + remainingOf(t));
+
+  /// Papers that have topics: 1 and 2 first, then 0 (not set) if any topic lacks one.
+  List<int> get papers {
+    final present = <int>{for (final t in orderedLeaves) paperOf(t)};
+    return [for (final p in const [1, 2, 0]) if (present.contains(p)) p];
   }
 
-  /// Saves the current projection as the plan you are held to.
-  Future<void> replan() async {
-    final e = exam;
-    if (e == null) return;
-    final p = buildPlan(exam: e, today: DateTime.now(), remaining: remainingLeaves);
-    final dates = <int, DateTime?>{
-      for (final t in topics)
-        if (t.id != null) t.id!: p.finishDates[t.id!],
-    };
-    await AppDb.instance.setDueDates(dates);
+  bool get hasUntaggedPaper => orderedLeaves.any((t) => paperOf(t) == 0);
+
+  /// Top-level topics, in order (these carry the paper).
+  List<Topic> get sections => childrenOf(null);
+
+  Future<void> setPaper(Topic root, int paper) async {
+    await AppDb.instance.updateTopic(root.copyWith(paper: paper));
     await _reload();
   }
 
-  bool get hasPlan => leaves.any((t) => t.dueDate != null);
-
-  /// Unfinished topics whose planned finish day has passed.
-  List<Topic> get overdue {
+  PaperStats statsFor(int paper) {
     final today = dayOnly(DateTime.now());
-    return remainingLeaves
-        .where((t) => t.dueDate != null && t.dueDate!.isBefore(today))
-        .toList();
+    final weekStart = DateTime(today.year, today.month, today.day - 6);
+    var total = 0.0;
+    var remaining = 0.0;
+    var done = 0;
+    var count = 0;
+    for (final t in orderedLeaves) {
+      if (paperOf(t) != paper) continue;
+      count++;
+      total += t.sizeHours;
+      remaining += remainingOf(t);
+      if (isComplete(t.stage)) done++;
+    }
+    var week = 0.0;
+    for (final l in logs) {
+      final topic = _byId[l.topicId];
+      if (topic == null || paperOf(topic) != paper) continue;
+      final d = dayOnly(l.day);
+      if (!d.isBefore(weekStart) && !d.isAfter(today)) week += l.hours;
+    }
+    return PaperStats(paper, count, done, total, remaining, week);
   }
 
-  double get overdueHours => overdue.fold(0.0, (sum, t) => sum + t.sizeHours);
+  /// Hours logged on [day], for one paper or (if [paper] is null) all of them.
+  double hoursOn(DateTime day, {int? paper}) {
+    final d = dayOnly(day);
+    var sum = 0.0;
+    for (final l in logs) {
+      if (dayOnly(l.day) != d) continue;
+      if (paper != null) {
+        final topic = _byId[l.topicId];
+        if (topic == null || paperOf(topic) != paper) continue;
+      }
+      sum += l.hours;
+    }
+    return sum;
+  }
 
-  /// Topics added or left out since the plan was saved.
-  bool get needsReplan => hasPlan && remainingLeaves.any((t) => t.dueDate == null);
+  List<StudyLog> logsOn(DateTime day) {
+    final d = dayOnly(day);
+    return logs.where((l) => dayOnly(l.day) == d).toList();
+  }
+
+  Topic? topicById(int id) => _byId[id];
+
+  /// Started but not finished topics, most recently studied first.
+  List<Topic> get inProgress {
+    final lastLog = <int, DateTime>{};
+    for (final l in logs) {
+      final prev = lastLog[l.topicId];
+      if (prev == null || l.day.isAfter(prev)) lastLog[l.topicId] = l.day;
+    }
+    final started = orderedLeaves.where((t) {
+      if (isComplete(t.stage)) return false;
+      return loggedHoursOf(t) > 0 ||
+          t.stage == Stage.reading ||
+          t.stage == Stage.cardsMade ||
+          t.stage == Stage.reviewing;
+    }).toList();
+    started.sort((a, b) {
+      final da = lastLog[a.id] ?? DateTime(2000);
+      final db = lastLog[b.id] ?? DateTime(2000);
+      return db.compareTo(da);
+    });
+    return started;
+  }
+
+  /// Adds [hours] to [t] for today. A topic you had not started moves to Reading.
+  Future<void> logStudy(Topic t, double hours) async {
+    if (hours <= 0) return;
+    await AppDb.instance.addLog(t.id!, dayOnly(DateTime.now()), hours);
+    if (t.stage == Stage.notStarted) {
+      await AppDb.instance.setStage(t.id!, Stage.reading);
+    }
+    await _reload();
+  }
+
+  Future<void> deleteLog(StudyLog l) async {
+    await AppDb.instance.deleteLog(l.id!);
+    await _reload();
+  }
+
+  // ---- Pace and warnings ----
 
   double get typicalDayHours {
     final e = exam;
@@ -226,18 +334,65 @@ class AppState extends ChangeNotifier {
     return (e.weekdayHours * 5 + e.weekendHours * 2) / 7;
   }
 
+  double get todayTarget => exam == null ? 0 : capacityOn(exam!, DateTime.now());
+
+  Forecast get forecast => exam == null
+      ? Forecast(remaining: 0, totalCapacity: 0, usable: 0, studyDays: 0, finish: null)
+      : buildForecast(exam: exam!, today: DateTime.now(), remaining: remainingHours);
+
+  WeekPace get weekPace => exam == null
+      ? WeekPace(0, 0, 0)
+      : trailingPace(exam: exam!, today: DateTime.now(), loggedByDay: _loggedByDay);
+
   Alert get alert => alertFor(
-        overdueHours: hasPlan ? overdueHours : 0,
+        behindHours: weekPace.shortfall,
         dailyHours: typicalDayHours,
-        fits: plan.fits,
+        fits: forecast.canFinish,
       );
 
-  /// Today's slice of the projected plan (empty on a rest day).
-  PlanDay? get todayPlan {
-    final today = dayOnly(DateTime.now());
-    for (final d in plan.days) {
-      if (d.date == today) return d;
-    }
-    return null;
+  /// The paper that got less of your time this week, if both still have work
+  /// left. Both papers carry equal marks, so this is only a nudge.
+  int? get suggestedPaper {
+    final left = [
+      for (final p in papers)
+        if (p != 0 && statsFor(p).remainingHours > 0.0001) statsFor(p),
+    ];
+    if (left.length < 2) return null;
+    left.sort((a, b) {
+      final c = a.loggedWeek.compareTo(b.loggedWeek);
+      return c != 0 ? c : b.remainingHours.compareTo(a.remainingHours);
+    });
+    if ((left[1].loggedWeek - left[0].loggedWeek).abs() < 0.5) return null;
+    return left.first.paper;
+  }
+}
+
+/// Totals for one paper.
+class PaperStats {
+  PaperStats(
+    this.paper,
+    this.topicsTotal,
+    this.topicsDone,
+    this.totalHours,
+    this.remainingHours,
+    this.loggedWeek,
+  );
+
+  final int paper;
+  final int topicsTotal;
+  final int topicsDone;
+  final double totalHours;
+  final double remainingHours;
+
+  /// Hours logged in the last 7 days (including today).
+  final double loggedWeek;
+
+  /// Share of study hours done, from 0 to 1.
+  double get doneFraction {
+    if (totalHours <= 0) return 0;
+    final f = 1 - remainingHours / totalHours;
+    if (f < 0) return 0;
+    if (f > 1) return 1;
+    return f;
   }
 }

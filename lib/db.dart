@@ -17,7 +17,7 @@ class AppDb {
     final path = join(await getDatabasesPath(), 'exam_prep.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -29,7 +29,8 @@ class AppDb {
             exam_date TEXT NOT NULL,
             weekday_hours REAL NOT NULL,
             weekend_hours REAL NOT NULL,
-            days_off TEXT NOT NULL DEFAULT ''
+            days_off TEXT NOT NULL DEFAULT '',
+            start_date TEXT
           )
         ''');
         await db.execute('''
@@ -43,19 +44,39 @@ class AppDb {
             weightage INTEGER NOT NULL DEFAULT 0,
             stage INTEGER NOT NULL DEFAULT 0,
             sort_order INTEGER NOT NULL DEFAULT 0,
-            due_date TEXT
+            paper INTEGER NOT NULL DEFAULT 0
           )
         ''');
         await db.execute('CREATE INDEX idx_topic_exam ON topic(exam_id)');
         await db.execute('CREATE INDEX idx_topic_parent ON topic(parent_id)');
+        await _createLogTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 2) {
-          await db.execute('ALTER TABLE topic ADD COLUMN due_date TEXT');
+        if (oldVersion < 3) {
+          await db.execute('ALTER TABLE topic ADD COLUMN paper INTEGER NOT NULL DEFAULT 0');
+          await db.execute('ALTER TABLE exam ADD COLUMN start_date TEXT');
+          await db.update('exam', {'start_date': _iso(DateTime.now())});
+          await _createLogTable(db);
         }
       },
     );
   }
+
+  static Future<void> _createLogTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE study_log(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        topic_id INTEGER NOT NULL REFERENCES topic(id) ON DELETE CASCADE,
+        day TEXT NOT NULL,
+        hours REAL NOT NULL
+      )
+    ''');
+    await db.execute('CREATE INDEX idx_log_topic ON study_log(topic_id)');
+    await db.execute('CREATE INDEX idx_log_day ON study_log(day)');
+  }
+
+  static String _iso(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
 
   // ---- Exam ----
 
@@ -69,7 +90,9 @@ class AppDb {
   Future<void> saveExam(Exam exam) async {
     final db = await _database;
     if (exam.id == null) {
-      await db.insert('exam', exam.toMap());
+      final map = exam.toMap();
+      map.putIfAbsent('start_date', () => _iso(DateTime.now()));
+      await db.insert('exam', map);
     } else {
       await db.update('exam', exam.toMap(), where: 'id = ?', whereArgs: [exam.id]);
     }
@@ -108,24 +131,26 @@ class AppDb {
     await db.update('topic', {'stage': stage.index}, where: 'id = ?', whereArgs: [id]);
   }
 
-  /// Saves planned finish dates in one go (null clears a topic's date).
-  Future<void> setDueDates(Map<int, DateTime?> dates) async {
+  // ---- Study log ----
+
+  Future<List<StudyLog>> getLogs(int examId) async {
     final db = await _database;
-    await db.transaction((txn) async {
-      for (final entry in dates.entries) {
-        final d = entry.value;
-        await txn.update(
-          'topic',
-          {
-            'due_date': d == null
-                ? null
-                : '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}',
-          },
-          where: 'id = ?',
-          whereArgs: [entry.key],
-        );
-      }
-    });
+    final rows = await db.rawQuery(
+      'SELECT l.* FROM study_log l JOIN topic t ON t.id = l.topic_id '
+      'WHERE t.exam_id = ? ORDER BY l.day, l.id',
+      [examId],
+    );
+    return rows.map(StudyLog.fromMap).toList();
+  }
+
+  Future<void> addLog(int topicId, DateTime day, double hours) async {
+    final db = await _database;
+    await db.insert('study_log', StudyLog(topicId: topicId, day: day, hours: hours).toMap());
+  }
+
+  Future<void> deleteLog(int id) async {
+    final db = await _database;
+    await db.delete('study_log', where: 'id = ?', whereArgs: [id]);
   }
 
   /// Deletes the topic and, through the foreign key, all its subtopics.
@@ -156,6 +181,7 @@ class AppDb {
             sizeHours: item.sizeHours,
             difficulty: item.difficulty,
             importance: item.importance,
+            paper: stack[level] == null ? item.paper : 0,
             sortOrder: order++,
           ).toMap(),
         );

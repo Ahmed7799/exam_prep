@@ -17,7 +17,7 @@ I have attached the syllabus PDF for an exam I am preparing for. Break it down i
 Reply with ONLY one JSON code block and nothing else, in exactly this shape:
 
 {"topics": [
-  {"name": "Indian Polity", "level": 0, "size_hours": 0, "difficulty": 2, "importance": 3},
+  {"name": "Indian Polity", "level": 0, "paper": 1, "size_hours": 0, "difficulty": 2, "importance": 3},
   {"name": "Fundamental Rights", "level": 1, "size_hours": 2, "difficulty": 2, "importance": 4}
 ]}
 
@@ -26,6 +26,7 @@ Rules:
 - Use the syllabus's own wording for names. Do not invent topics that the syllabus does not mention.
 - Skip pages that are not syllabus content, such as exam pattern tables, instructions, marks schemes and eligibility, unless they name subjects.
 - Topics with nothing nested under them are studied directly. Each should be something I can read and make flashcards from in one sitting. Split a very broad one into smaller topics and merge tiny fragments.
+- "paper": only on level 0 items. 1 if the section belongs to Paper 1 (General Studies), 2 if it belongs to Paper 2 (the core subject). Leave it out if the syllabus does not say which paper.
 - "size_hours": your rough estimate of study time for a topic with nothing nested under it, usually between 0.5 and 4. Use 0 for topics that have subtopics under them.
 - "difficulty": 1 easy, 2 medium, 3 hard.
 - "importance": 0 to 5. Use 0 unless the syllabus itself shows weightage, such as marks per section, and then reflect it.
@@ -114,9 +115,14 @@ List<ParsedTopic> topicsFromToolInput(Object? input) {
     if (importance < 0) importance = 0;
     if (importance > 5) importance = 5;
 
+    var paper = item['paper'] is num ? (item['paper'] as num).toInt() : 0;
+    if (paper < 0 || paper > 2) paper = 0;
+    if (level != 0) paper = 0;
+
     first.add(ParsedTopic(
       name,
       level,
+      paper: paper,
       sizeHours: size,
       difficulty: difficulty,
       importance: importance,
