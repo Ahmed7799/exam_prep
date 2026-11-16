@@ -94,6 +94,8 @@ class Topic {
     this.stage = Stage.notStarted,
     this.sortOrder = 0,
     this.paper = 0,
+    this.sourceId,
+    this.sourcePage,
   });
 
   final int? id;
@@ -116,6 +118,10 @@ class Topic {
   /// carry it; subtopics belong to the paper of their top-level topic.
   final int paper;
 
+  /// The PDF you read this topic from, and the PDF page you were last on.
+  final int? sourceId;
+  final int? sourcePage;
+
   Topic copyWith({
     String? name,
     double? sizeHours,
@@ -123,6 +129,8 @@ class Topic {
     int? importance,
     Stage? stage,
     int? paper,
+    int? sourceId,
+    int? sourcePage,
   }) =>
       Topic(
         id: id,
@@ -135,6 +143,8 @@ class Topic {
         stage: stage ?? this.stage,
         sortOrder: sortOrder,
         paper: paper ?? this.paper,
+        sourceId: sourceId ?? this.sourceId,
+        sourcePage: sourcePage ?? this.sourcePage,
       );
 
   Map<String, Object?> toMap() => {
@@ -148,6 +158,8 @@ class Topic {
         'stage': stage.index,
         'sort_order': sortOrder,
         'paper': paper,
+        'source_id': sourceId,
+        'source_page': sourcePage,
       };
 
   factory Topic.fromMap(Map<String, Object?> m) => Topic(
@@ -161,6 +173,8 @@ class Topic {
         stage: _stageFromIndex(m['stage'] as int),
         sortOrder: m['sort_order'] as int,
         paper: (m['paper'] as int?) ?? 0,
+        sourceId: m['source_id'] as int?,
+        sourcePage: m['source_page'] as int?,
       );
 }
 
@@ -224,6 +238,8 @@ Color flagColor(int flag) => switch (flag) {
 class CardDraft {
   const CardDraft(this.front, this.back, {this.page});
 
+  CardDraft withPage(int? p) => CardDraft(front, back, page: p);
+
   final String front;
   final String back;
 
@@ -246,6 +262,7 @@ class Flashcard {
     this.reps = 0,
     this.lapses = 0,
     this.lastReview,
+    this.sourceId,
   })  : created = created ?? DateTime.now(),
         due = due ?? DateTime.now();
 
@@ -267,6 +284,9 @@ class Flashcard {
   final int lapses;
   final DateTime? lastReview;
 
+  /// The PDF the card was made from, so its page can be opened.
+  final int? sourceId;
+
   bool get isNew => reps == 0;
 
   Flashcard copyWith({
@@ -282,6 +302,7 @@ class Flashcard {
     int? reps,
     int? lapses,
     DateTime? lastReview,
+    int? sourceId,
   }) =>
       Flashcard(
         id: id,
@@ -297,6 +318,7 @@ class Flashcard {
         reps: reps ?? this.reps,
         lapses: lapses ?? this.lapses,
         lastReview: lastReview ?? this.lastReview,
+        sourceId: sourceId ?? this.sourceId,
       );
 
   Map<String, Object?> toMap() => {
@@ -313,6 +335,7 @@ class Flashcard {
         'reps': reps,
         'lapses': lapses,
         'last_review': lastReview?.toIso8601String(),
+        'source_id': sourceId,
       };
 
   factory Flashcard.fromMap(Map<String, Object?> m) => Flashcard(
@@ -329,5 +352,66 @@ class Flashcard {
         reps: (m['reps'] as int?) ?? 0,
         lapses: (m['lapses'] as int?) ?? 0,
         lastReview: m['last_review'] == null ? null : DateTime.parse(m['last_review'] as String),
+        sourceId: m['source_id'] as int?,
+      );
+}
+
+/// A PDF you read from, kept inside the app.
+class Source {
+  Source({
+    this.id,
+    required this.examId,
+    required this.title,
+    required this.filePath,
+    this.pageOffset = 0,
+    this.lastPage = 1,
+    this.lastTopicId,
+  });
+
+  final int? id;
+  final int examId;
+  final String title;
+  final String filePath;
+
+  /// PDF page index minus the page number printed on it. A book whose
+  /// printed page 1 is the PDF's 9th page has an offset of 8.
+  final int pageOffset;
+
+  /// PDF page index (from 1) where you stopped.
+  final int lastPage;
+  final int? lastTopicId;
+
+  int printedPage(int pdfPage) => pdfPage - pageOffset;
+
+  int pdfPage(int printed) => printed + pageOffset;
+
+  Source copyWith({String? title, int? pageOffset, int? lastPage, int? lastTopicId}) => Source(
+        id: id,
+        examId: examId,
+        title: title ?? this.title,
+        filePath: filePath,
+        pageOffset: pageOffset ?? this.pageOffset,
+        lastPage: lastPage ?? this.lastPage,
+        lastTopicId: lastTopicId ?? this.lastTopicId,
+      );
+
+  Map<String, Object?> toMap() => {
+        if (id != null) 'id': id,
+        'exam_id': examId,
+        'title': title,
+        'file_path': filePath,
+        'page_offset': pageOffset,
+        'last_page': lastPage,
+        'last_topic_id': lastTopicId,
+      };
+
+  factory Source.fromMap(Map<String, Object?> m) => Source(
+        id: m['id'] as int?,
+        examId: m['exam_id'] as int,
+        title: m['title'] as String,
+        filePath: m['file_path'] as String,
+        pageOffset: (m['page_offset'] as int?) ?? 0,
+        lastPage: (m['last_page'] as int?) ?? 1,
+        lastTopicId: m['last_topic_id'] as int?,
       );
 }

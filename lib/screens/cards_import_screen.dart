@@ -10,10 +10,26 @@ import 'markup_text.dart';
 /// Make cards with Claude in the Claude app: choose the topic and pages, copy
 /// the prompt, run it there with the PDF, paste the reply back here.
 class CardsImportScreen extends StatefulWidget {
-  const CardsImportScreen({super.key, required this.state, this.topicId});
+  const CardsImportScreen({
+    super.key,
+    required this.state,
+    this.topicId,
+    this.fromPage,
+    this.toPage,
+    this.pageText,
+    this.sourceId,
+  });
 
   final AppState state;
   final int? topicId;
+
+  /// Printed page numbers of the range, when coming from the PDF reader.
+  final int? fromPage;
+  final int? toPage;
+
+  /// Text of those pages, read from the PDF, so Claude does not need the file.
+  final String? pageText;
+  final int? sourceId;
 
   @override
   State<CardsImportScreen> createState() => _CardsImportScreenState();
@@ -21,8 +37,9 @@ class CardsImportScreen extends StatefulWidget {
 
 class _CardsImportScreenState extends State<CardsImportScreen> {
   late int? _topicId = widget.topicId;
-  final _from = TextEditingController();
-  final _to = TextEditingController();
+  late final _from = TextEditingController(text: widget.fromPage?.toString() ?? '');
+  late final _to = TextEditingController(text: widget.toPage?.toString() ?? '');
+  late bool _includeText = widget.pageText != null;
   final _reply = TextEditingController();
   List<CardDraft>? _drafts;
   String? _error;
@@ -45,12 +62,19 @@ class _CardsImportScreenState extends State<CardsImportScreen> {
       topicName: topic.name,
       fromPage: int.tryParse(_from.text.trim()),
       toPage: int.tryParse(_to.text.trim()),
+      pageText: _includeText ? widget.pageText : null,
     );
     await Clipboard.setData(ClipboardData(text: prompt));
     if (!mounted) return;
     setState(() => _error = null);
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Prompt copied. Paste it into Claude with your PDF.')),
+      SnackBar(
+        content: Text(
+          _includeText
+              ? 'Prompt with the page text copied. Paste it into Claude.'
+              : 'Prompt copied. Paste it into Claude with your PDF.',
+        ),
+      ),
     );
   }
 
@@ -84,7 +108,7 @@ class _CardsImportScreenState extends State<CardsImportScreen> {
       setState(() => _error = 'Choose the topic first.');
       return;
     }
-    final n = await widget.state.addCards(_topicId!, drafts);
+    final n = await widget.state.addCards(_topicId!, drafts, sourceId: widget.sourceId);
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Added $n cards')));
     Navigator.of(context).pop();
@@ -146,7 +170,25 @@ class _CardsImportScreenState extends State<CardsImportScreen> {
           const SizedBox(height: 16),
           Text('2. Run it in the Claude app', style: theme.textTheme.titleSmall),
           const SizedBox(height: 4),
-          const Text('Copy the prompt, open Claude, attach the PDF and paste the prompt.'),
+          if (widget.pageText != null) ...[
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              value: _includeText,
+              onChanged: (v) => setState(() => _includeText = v),
+              title: const Text('Put the page text in the prompt'),
+              subtitle: Text(
+                _includeText
+                    ? 'No need to attach the PDF. For pages with diagrams or tables as images, '
+                        'attach screenshots of those pages too.'
+                    : 'Attach the PDF in Claude yourself.',
+              ),
+            ),
+            Text(
+              '${widget.pageText!.length} characters read from the pages.',
+              style: theme.textTheme.bodySmall,
+            ),
+          ] else
+            const Text('Copy the prompt, open Claude, attach the PDF and paste the prompt.'),
           const SizedBox(height: 8),
           OutlinedButton.icon(
             onPressed: _copyPrompt,

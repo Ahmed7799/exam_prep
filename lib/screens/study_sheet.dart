@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import '../app_state.dart';
 import '../calc.dart';
 import '../models.dart';
+import 'library_screen.dart';
+import 'pdf_reader_screen.dart';
 
 /// Bottom sheet for one chapter: log time studied today and set its stage.
 Future<void> showStudySheet(BuildContext context, AppState state, Topic topic) {
@@ -75,6 +77,8 @@ class _StudySheet extends StatelessWidget {
                   '${paperShort(state.paperOf(t))} · ${formatHours(logged)} logged of '
                   '${formatHours(t.sizeHours)} · ${formatHours(state.remainingOf(t))} left',
                 ),
+                const SizedBox(height: 12),
+                _ReadButton(state: state, topic: t),
                 const SizedBox(height: 16),
                 Text('Log time studied today', style: theme.textTheme.titleSmall),
                 const SizedBox(height: 8),
@@ -127,6 +131,62 @@ class _StudySheet extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+class _ReadButton extends StatelessWidget {
+  const _ReadButton({required this.state, required this.topic});
+
+  final AppState state;
+  final Topic topic;
+
+  @override
+  Widget build(BuildContext context) {
+    final source = state.sourceById(topic.sourceId);
+    return Row(
+      children: [
+        Expanded(
+          child: FilledButton.tonalIcon(
+            onPressed: () {
+              final nav = Navigator.of(context);
+              nav.pop();
+              nav.push(
+                MaterialPageRoute<void>(
+                  builder: (_) => source == null
+                      ? LibraryScreen(state: state, pickForTopic: topic)
+                      : PdfReaderScreen(
+                          state: state,
+                          source: source,
+                          topic: topic,
+                          initialPage: topic.sourcePage,
+                        ),
+                ),
+              );
+            },
+            icon: const Icon(Icons.chrome_reader_mode_outlined),
+            label: Text(
+              source == null ? 'Read from a PDF' : 'Continue reading: ${source.title}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+        ),
+        if (source != null)
+          IconButton(
+            tooltip: 'Use a different PDF',
+            icon: const Icon(Icons.swap_horiz),
+            onPressed: () {
+              final nav = Navigator.of(context);
+              nav.pop();
+              nav.push(
+                MaterialPageRoute<void>(
+                  builder: (_) => LibraryScreen(state: state, pickForTopic: topic),
+                ),
+              );
+            },
+          ),
+      ],
     );
   }
 }

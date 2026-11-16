@@ -17,7 +17,7 @@ class AppDb {
     final path = join(await getDatabasesPath(), 'exam_prep.db');
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -44,13 +44,16 @@ class AppDb {
             weightage INTEGER NOT NULL DEFAULT 0,
             stage INTEGER NOT NULL DEFAULT 0,
             sort_order INTEGER NOT NULL DEFAULT 0,
-            paper INTEGER NOT NULL DEFAULT 0
+            paper INTEGER NOT NULL DEFAULT 0,
+            source_id INTEGER,
+            source_page INTEGER
           )
         ''');
         await db.execute('CREATE INDEX idx_topic_exam ON topic(exam_id)');
         await db.execute('CREATE INDEX idx_topic_parent ON topic(parent_id)');
         await _createLogTable(db);
         await _createCardTables(db);
+        await _createSourceTable(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 3) {
@@ -61,6 +64,14 @@ class AppDb {
         }
         if (oldVersion < 4) {
           await _createCardTables(db);
+        }
+        if (oldVersion < 5) {
+          if (oldVersion >= 4) {
+            await db.execute('ALTER TABLE card ADD COLUMN source_id INTEGER');
+          }
+          await db.execute('ALTER TABLE topic ADD COLUMN source_id INTEGER');
+          await db.execute('ALTER TABLE topic ADD COLUMN source_page INTEGER');
+          await _createSourceTable(db);
         }
       },
     );
@@ -94,7 +105,8 @@ class AppDb {
         difficulty REAL,
         reps INTEGER NOT NULL DEFAULT 0,
         lapses INTEGER NOT NULL DEFAULT 0,
-        last_review TEXT
+        last_review TEXT,
+        source_id INTEGER
       )
     ''');
     await db.execute('CREATE INDEX idx_card_topic ON card(topic_id)');
@@ -109,6 +121,20 @@ class AppDb {
     ''');
     await db.execute('CREATE INDEX idx_review_card ON review_log(card_id)');
     await db.execute('CREATE INDEX idx_review_day ON review_log(day)');
+  }
+
+  static Future<void> _createSourceTable(Database db) async {
+    await db.execute('''
+      CREATE TABLE source(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        exam_id INTEGER NOT NULL REFERENCES exam(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        file_path TEXT NOT NULL,
+        page_offset INTEGER NOT NULL DEFAULT 0,
+        last_page INTEGER NOT NULL DEFAULT 1,
+        last_topic_id INTEGER
+      )
+    ''');
   }
 
   static String _iso(DateTime d) =>
@@ -222,6 +248,41 @@ class AppDb {
     );
     final n = rows.isEmpty ? null : rows.first['n'];
     return n is int ? n : 0;
+  }
+
+  // ---- PDFs ----
+
+  Future<List<Source>> getSources(int examId) async {
+    final db = await _database;
+    final rows = await db.query('source', where: 'exam_id = ?', whereArgs: [examId], orderBy: 'title');
+    return rows.map(Source.fromMap).toList();
+  }
+
+  Future<int> insertSource(Source s) async {
+    final db = await _database;
+    return db.insert('source', s.toMap());
+  }
+
+  Future<void> updateSource(Source s) async {
+    final db = await _database;
+    await db.update('source', s.toMap(), where: 'id = ?', whereArgs: [s.id]);
+  }
+
+  /// Removes the PDF and unlinks topics and cards that pointed to it.
+  Future<void> deleteSource(int id) async {
+    final db = await _database;
+    await db.transaction((txn) async {
+      await txn.update('topic', {'source_id': null, 'source_page': null},
+          where: 'source_id = ?', whereArgs: [id]);
+      await txn.update('card', {'source_id': null}, where: 'source_id = ?', whereArgs: [id]);
+      await txn.delete('source', where: 'id = ?', whereArgs: [id]);
+    });
+  }
+
+  Future<void> linkTopicSource(int topicId, int sourceId, int page) async {
+    final db = await _database;
+    await db.update('topic', {'source_id': sourceId, 'source_page': page},
+        where: 'id = ?', whereArgs: [topicId]);
   }
 
   // ---- Study log ----

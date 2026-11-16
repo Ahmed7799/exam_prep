@@ -388,4 +388,27 @@ Here you go:
       expect(() => parseClaudeCards('nothing'), throwsA(isA<SyllabusAiException>()));
     });
   });
+
+  group('PDF pages', () {
+    test('printed and PDF page numbers convert both ways', () {
+      final s = Source(examId: 1, title: 'Laxmikanth', filePath: '/x.pdf', pageOffset: 8);
+      expect(s.printedPage(50), 42);
+      expect(s.pdfPage(42), 50);
+    });
+
+    test('the cards prompt can carry page text instead of a PDF', () {
+      final withText = buildCardsPrompt(
+        topicName: 'Fundamental Rights',
+        fromPage: 42,
+        toPage: 44,
+        pageText: '--- Page 42 ---\nArticle 17 abolishes untouchability.',
+      );
+      expect(withText.contains('Below is the text of pages 42 to 44'), isTrue);
+      expect(withText.contains('Article 17 abolishes untouchability.'), isTrue);
+      expect(withText.contains('I have attached a PDF'), isFalse);
+      final withPdf = buildCardsPrompt(topicName: 'Fundamental Rights', fromPage: 42, toPage: 44);
+      expect(withPdf.contains('I have attached a PDF. Make flashcards from pages 42 to 44'), isTrue);
+    });
+  });
 }
+

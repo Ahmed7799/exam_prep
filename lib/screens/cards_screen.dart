@@ -11,6 +11,7 @@ import '../models.dart';
 import 'card_editor_screen.dart';
 import 'card_list_screen.dart';
 import 'cards_import_screen.dart';
+import 'library_screen.dart';
 import 'review_screen.dart';
 
 /// Cards tab: review, revision lists, cards by topic, import and export.
@@ -60,6 +61,11 @@ class CardsScreen extends StatelessWidget {
           appBar: AppBar(
             title: const Text('Cards'),
             actions: [
+              IconButton(
+                tooltip: 'PDFs',
+                icon: const Icon(Icons.picture_as_pdf_outlined),
+                onPressed: () => _open(context, LibraryScreen(state: state)),
+              ),
               IconButton(
                 tooltip: 'Cards from Claude',
                 icon: const Icon(Icons.auto_awesome),

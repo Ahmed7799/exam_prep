@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
 import 'calc.dart';
 import 'db.dart';
@@ -15,6 +19,7 @@ class AppState extends ChangeNotifier {
 
   List<StudyLog> logs = [];
   List<Flashcard> cards = [];
+  List<Source> sources = [];
   int reviewsToday = 0;
   Map<int, Flashcard> _cardById = {};
   Map<int, Topic> _byId = {};
@@ -29,6 +34,7 @@ class AppState extends ChangeNotifier {
     topics = e == null ? [] : await AppDb.instance.getTopics(e.id!);
     logs = e == null ? [] : await AppDb.instance.getLogs(e.id!);
     cards = e == null ? [] : await AppDb.instance.getCards(e.id!);
+    sources = e == null ? [] : await AppDb.instance.getSources(e.id!);
     reviewsToday = e == null ? 0 : await AppDb.instance.countReviewsOn(e.id!, DateTime.now());
     _cardById = {for (final c in cards) c.id!: c};
     _children = {};
@@ -482,7 +488,7 @@ class AppState extends ChangeNotifier {
   }
 
   /// Adds cards (for example from a Claude reply) to a topic. Returns the count.
-  Future<int> addCards(int topicId, List<CardDraft> drafts) async {
+  Future<int> addCards(int topicId, List<CardDraft> drafts, {int? sourceId}) async {
     if (drafts.isEmpty) return 0;
     final now = DateTime.now();
     await AppDb.instance.insertCards([
@@ -494,6 +500,7 @@ class AppState extends ChangeNotifier {
           page: d.page,
           created: now,
           due: now,
+          sourceId: sourceId,
         ),
     ]);
     await _markCardsMade(topicId);
@@ -517,6 +524,65 @@ class AppState extends ChangeNotifier {
     if (t == null) return '';
     final up = pathOf(t);
     return up.isEmpty ? t.name : '$up > ${t.name}';
+  }
+
+  // ---- PDFs ----
+
+  Source? sourceById(int? id) {
+    if (id == null) return null;
+    for (final s in sources) {
+      if (s.id == id) return s;
+    }
+    return null;
+  }
+
+  /// Copies a picked PDF into the app's own storage and adds it to the library.
+  Future<Source?> addSource(String title, Uint8List bytes) async {
+    final e = exam;
+    if (e == null) return null;
+    final docs = await getApplicationDocumentsDirectory();
+    final dir = Directory(p.join(docs.path, 'pdfs'));
+    if (!await dir.exists()) await dir.create(recursive: true);
+    final safe = title.replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
+    final file = File(p.join(dir.path, '${DateTime.now().millisecondsSinceEpoch}_$safe'));
+    await file.writeAsBytes(bytes, flush: true);
+    final name = title.toLowerCase().endsWith('.pdf') ? title.substring(0, title.length - 4) : title;
+    final id = await AppDb.instance.insertSource(
+      Source(examId: e.id!, title: name, filePath: file.path),
+    );
+    await _reload();
+    return sourceById(id);
+  }
+
+  Future<void> updateSource(Source s) async {
+    await AppDb.instance.updateSource(s);
+    await _reload();
+  }
+
+  /// Saves where you are without rebuilding every screen.
+  Future<void> saveReadingPosition(Source s, int pdfPage, {Topic? topic}) async {
+    final updated = s.copyWith(lastPage: pdfPage, lastTopicId: topic?.id);
+    await AppDb.instance.updateSource(updated);
+    if (topic != null) {
+      await AppDb.instance.linkTopicSource(topic.id!, s.id!, pdfPage);
+    }
+    await _reload();
+  }
+
+  Future<void> deleteSource(Source s) async {
+    await AppDb.instance.deleteSource(s.id!);
+    try {
+      final f = File(s.filePath);
+      if (await f.exists()) await f.delete();
+    } catch (_) {
+      // The record is gone; a leftover file is harmless.
+    }
+    await _reload();
+  }
+
+  Future<void> linkTopic(Topic t, Source s, int pdfPage) async {
+    await AppDb.instance.linkTopicSource(t.id!, s.id!, pdfPage);
+    await _reload();
   }
 }
 
